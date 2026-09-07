@@ -9,15 +9,18 @@
     :row-config="rowConfig"
     :column-config="columnConfig"
     :sort-config="sortConfig"
+    :seq-config="seqConfig"
     :scroll-y="scrollYConfig"
     :edit-config="editConfig"
     :cell-class-name="cellClassName"
+    :cell-style="cellStyle"
     show-overflow="ellipsis"
     v-bind="$attrs"
     @sort-change="handleSortChange"
     @edit-activated="handleEditActivated"
     @edit-closed="handleEditClosed"
   >
+    <vxe-column v-if="showRowNumber" type="seq" title="序号" width="70" fixed="left" align="center" />
     <vxe-column
       v-for="field in visibleFields"
       :key="field.fieldKey"
@@ -25,6 +28,7 @@
       :title="field.fieldLabel"
       :min-width="field.columnWidth || 140"
       :sortable="field.sortable"
+      :align="field.align || 'center'"
       :edit-render="field.formVisible === false ? null : {}"
     >
       <template #header>
@@ -38,6 +42,7 @@
           :model-value="editing.value"
           :field="field"
           :dict-options="dictOptions"
+          :cached-api-options="apiOptionMap[field.fieldKey]"
           @update:model-value="editing.value = $event"
           @save="finishEdit(row)"
           @cancel="cancelEdit(row)"
@@ -49,40 +54,62 @@
           :class="{
             'is-editable': isEditable(row, field),
             'is-required-empty': field.required && isEmpty(row[field.fieldKey]),
-            'is-saving': isCellSaving(row, field)
+            'is-saving': isCellSaving(row, field),
+            [`is-align-${field.align || 'center'}`]: true
           }"
           :title="cellTitle(row, field)"
         >
-          <template v-if="field.dataType === 'BOOLEAN' && !hasOptions(field)">
-            <el-tag :type="booleanValue(row[field.fieldKey]) ? 'success' : 'info'" effect="light">
-              {{ booleanValue(row[field.fieldKey]) ? '是' : '否' }}
-            </el-tag>
-          </template>
-          <template v-else-if="field.componentType === 'color-picker'">
-            <span class="color-value">
-              <i :style="{ backgroundColor: row[field.fieldKey] || '#dcdfe6' }" />
-              {{ row[field.fieldKey] || '-' }}
-            </span>
-          </template>
-          <template v-else-if="hasOptions(field)">
-            <!-- 字典字段复用若依 DictTag，完整支持回显样式、样式属性和自定义颜色。 -->
-            <dict-tag
-              v-if="field.optionSource === 'DICT'"
-              :options="dictTagOptions[field.dictType] || []"
-              :value="row[field.fieldKey]"
-              :show-value="false"
-            />
-            <template v-else v-for="item in selectedOptions(field, row[field.fieldKey])" :key="String(item.value)">
-              <el-tag v-if="item.color" :style="dictColorTagStyle(item.color)" class="option-tag" effect="light">{{ item.label }}</el-tag>
-              <el-tag v-else :type="item.type || item.elTagType || ''" :class="item.cssClass || item.elTagClass" class="option-tag" effect="light">{{ item.label }}</el-tag>
+          <div class="cell-content">
+            <template v-if="field.dataType === 'BOOLEAN' && !hasOptions(field)">
+              <el-tag :type="booleanValue(row[field.fieldKey]) ? 'success' : 'info'" effect="light">
+                {{ booleanValue(row[field.fieldKey]) ? '是' : '否' }}
+              </el-tag>
             </template>
-            <span v-if="!selectedOptions(field, row[field.fieldKey]).length">-</span>
-          </template>
-          <template v-else>
-            {{ displayValue(field, row[field.fieldKey]) }}
-          </template>
-          <span v-if="isCellSaving(row, field)" class="saving-hint">保存中...</span>
-          <span v-else-if="isEditable(row, field)" class="edit-hint">编辑</span>
+            <template v-else-if="field.componentType === 'color-picker'">
+              <span class="color-value">
+                <i :style="{ backgroundColor: row[field.fieldKey] || '#dcdfe6' }" />
+                {{ row[field.fieldKey] || '-' }}
+              </span>
+            </template>
+            <template v-else-if="hasOptions(field)">
+              <template v-if="isShowAsTag(field)">
+                <!-- 显式开启以标签展示时渲染为 Tag -->
+                <dict-tag
+                  v-if="field.optionSource === 'DICT'"
+                  :options="dictTagOptions[field.dictType] || []"
+                  :value="row[field.fieldKey]"
+                  :show-value="false"
+                />
+                <template v-else v-for="item in selectedOptions(field, row[field.fieldKey])" :key="String(item.value)">
+                  <el-tag v-if="item.color" :style="dictColorTagStyle(item.color)" class="option-tag" effect="light">{{ item.label }}</el-tag>
+                  <el-tag v-else :type="item.type || item.elTagType || ''" :class="item.cssClass || item.elTagClass" class="option-tag" effect="light">{{ item.label }}</el-tag>
+                </template>
+                <span v-if="!selectedOptions(field, row[field.fieldKey]).length">-</span>
+              </template>
+              <template v-else>
+                <!-- 默认以纯文本展示，不包裹 Tag；配置了自定义颜色则显示彩色状态圆点 -->
+                <span class="options-text">
+                  <template v-for="(item, idx) in selectedOptions(field, row[field.fieldKey])" :key="String(item.value)">
+                    <span v-if="idx > 0">、</span>
+                    <span v-if="item.color" class="option-color-text" :style="{ color: item.color }">
+                      <i class="color-dot" :style="{ backgroundColor: item.color }" />{{ item.label }}
+                    </span>
+                    <span v-else>{{ item.label }}</span>
+                  </template>
+                  <span v-if="!selectedOptions(field, row[field.fieldKey]).length">-</span>
+                </span>
+              </template>
+            </template>
+            <template v-else>
+              {{ displayValue(field, row[field.fieldKey]) }}
+            </template>
+          </div>
+          <span v-if="isCellSaving(row, field)" class="saving-hint" title="保存中...">
+            <el-icon class="is-loading"><Loading /></el-icon>
+          </span>
+          <span v-else-if="isEditable(row, field)" class="edit-hint" title="点击编辑">
+            <el-icon><Edit /></el-icon>
+          </span>
         </div>
       </template>
     </vxe-column>
@@ -99,10 +126,10 @@
 <script setup name="DynamicFieldTable">
 import { VxeTable, VxeColumn } from 'vxe-table'
 import 'vxe-table/lib/style.css'
+import { Edit, Loading } from '@element-plus/icons-vue'
 import { dictColorTagStyle } from '@/utils/dictColor'
-
-// 动态编辑器与表格主体分包，浏览数据时不会初始化 Element Plus 表单控件。
-const DynamicCellEditor = defineAsyncComponent(() => import('./DynamicCellEditor.vue'))
+import { fetchApiOptions } from '@/utils/dynamicSource'
+import DynamicCellEditor from './DynamicCellEditor.vue'
 
 defineOptions({ inheritAttrs: false })
 
@@ -114,22 +141,49 @@ const props = defineProps({
   border: { type: [Boolean, String], default: true },
   stripe: { type: Boolean, default: true },
   maxHeight: { type: [String, Number], default: 620 },
-  editable: { type: [Boolean, Function], default: false }
+  editable: { type: [Boolean, Function], default: false },
+  showRowNumber: { type: Boolean, default: false },
+  sequenceStart: { type: Number, default: 0 },
+  defaultSortField: { type: String, default: '' },
+  defaultSortOrder: { type: String, default: 'desc' }
 })
 
-const emit = defineEmits(['sort-change', 'row-click', 'cell-change', 'cancel-cell'])
+const emit = defineEmits(['sort-change', 'cell-change'])
 const tableRef = ref()
+const apiOptionMap = ref({})
+
+async function loadAllApiOptions() {
+  const apiFields = (props.fields || []).filter(f => f.optionSource === 'API')
+  if (!apiFields.length) return
+  const map = { ...apiOptionMap.value }
+  await Promise.all(apiFields.map(async field => {
+    const componentProps = parseJson(field.componentPropsJson, {})
+    const apiConfig = componentProps.apiConfig
+    if (apiConfig?.url) {
+      map[field.fieldKey] = await fetchApiOptions(apiConfig)
+    }
+  }))
+  apiOptionMap.value = map
+}
+
+watch(() => props.fields, () => loadAllApiOptions(), { immediate: true, deep: true })
 
 const editing = reactive({ row: null, field: null, value: undefined, originalValue: undefined, cancelled: false })
 
-const rowConfig = { keyField: '_clientId', isHover: true }
+const rowConfig = { keyField: '_clientId', isHover: true, height: 48 }
 const columnConfig = { resizable: true }
-const sortConfig = { remote: true }
+const seqConfig = computed(() => ({ startIndex: props.sequenceStart }))
+const sortConfig = computed(() => ({
+  remote: true,
+  defaultSort: props.defaultSortField
+    ? { field: props.defaultSortField, order: props.defaultSortOrder === 'asc' ? 'asc' : 'desc' }
+    : undefined
+}))
 const scrollYConfig = computed(() => ({ enabled: props.data.length > 50, gt: 50 }))
 const editConfig = computed(() => ({
   trigger: 'click',
   mode: 'cell',
-  showStatus: true,
+  showStatus: false,
   autoClear: true,
   beforeEditMethod: ({ row, column }) => {
     const field = fieldOf(column.field)
@@ -165,16 +219,13 @@ function handleEditActivated({ row, column }) {
   editing.value = cloneValue(row[field.fieldKey])
   editing.originalValue = cloneValue(row[field.fieldKey])
   editing.cancelled = false
-  emit('row-click', row)
 }
 
 /** VXE 在点击其它单元格或表格外部时触发 edit-closed，由此统一执行失焦保存。 */
 function handleEditClosed({ row, column }) {
   const field = editing.field || fieldOf(column.field)
   if (!field || editing.row !== row) return resetEditing()
-  if (editing.cancelled) {
-    emit('cancel-cell', { row, field })
-  } else {
+  if (!editing.cancelled) {
     emit('cell-change', {
       row,
       field,
@@ -192,13 +243,28 @@ function handleSortChange({ field, order }) {
   })
 }
 
+function getFieldRequiredColor(field) {
+  const validation = parseJson(field?.validationJson, {})
+  return validation.requiredColor || '#fff0f0'
+}
+
+function cellStyle({ row, column }) {
+  const field = fieldOf(column.field)
+  if (field?.required && isEmpty(row[field.fieldKey])) {
+    return {
+      backgroundColor: getFieldRequiredColor(field)
+    }
+  }
+  return null
+}
+
 function cellClassName({ row, column }) {
   const field = fieldOf(column.field)
   return field?.required && isEmpty(row[field.fieldKey]) ? 'required-empty-cell' : ''
 }
 
 function isEditable(row, field) {
-  if (field.formVisible === false || row._saving) return false
+  if (field.formVisible === false) return false
   return typeof props.editable === 'function' ? props.editable(row, field) : props.editable
 }
 
@@ -229,6 +295,11 @@ async function cancelEdit(row) {
   await tableRef.value?.clearEdit(row)
 }
 
+async function applySort(field, order) {
+  if (field) await tableRef.value?.sort(field, order === 'asc' ? 'asc' : 'desc')
+  else await tableRef.value?.clearSort()
+}
+
 function resetEditing() {
   editing.row = null
   editing.field = null
@@ -242,8 +313,29 @@ function parseJson(value, fallback) {
   try { return typeof value === 'string' ? JSON.parse(value) : value } catch { return fallback }
 }
 
+function isShowAsTag(field) {
+  const componentProps = parseJson(field.componentPropsJson, {})
+  return Boolean(componentProps.showAsTag)
+}
+
+function displayOptionLabels(field, value) {
+  const selected = selectedOptions(field, value)
+  if (!selected.length) {
+    return isEmpty(value) ? '-' : String(value)
+  }
+  return selected.map(option => option.label).join('、')
+}
+
 function optionsOf(field) {
-  if (field.optionSource === 'DICT' && field.dictType) return props.dictOptions[field.dictType] || []
+  if (field.optionSource === 'DICT' && field.dictType) {
+    const list = props.dictOptions[field.dictType] || []
+    return list.map(opt => ({
+      ...opt,
+      label: opt.label ?? opt.dictLabel,
+      value: opt.value ?? opt.dictValue
+    }))
+  }
+  if (field.optionSource === 'API') return apiOptionMap.value[field.fieldKey] || []
   return parseJson(field.optionsJson, [])
 }
 
@@ -278,21 +370,117 @@ function cloneValue(value) {
   return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value))
 }
 
-defineExpose({ startEdit, finishEdit, cancelEdit })
+defineExpose({ startEdit, finishEdit, cancelEdit, applySort })
 </script>
 
 <style scoped>
-.dynamic-cell { position: relative; min-height: 30px; display: flex; align-items: center; width: 100%; }
-.dynamic-cell.is-editable { cursor: text; padding-right: 48px; border-radius: 4px; }
+/* 锁定 VXE Table 行高与单元格尺寸，彻底消除重排与状态切换引起的垂直抖动 */
+:deep(.vxe-table--render-default .vxe-body--row) {
+  height: 48px !important;
+}
+:deep(.vxe-table--render-default .vxe-body--column) {
+  height: 48px !important;
+  padding: 0 !important;
+}
+:deep(.vxe-table--render-default .vxe-cell) {
+  height: 48px !important;
+  max-height: 48px !important;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+.dynamic-cell {
+  position: relative;
+  height: 32px;
+  min-height: 32px;
+  line-height: 32px;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border-radius: 4px;
+}
+.dynamic-cell.is-align-left {
+  justify-content: flex-start;
+  padding-left: 4px;
+  padding-right: 20px;
+}
+.dynamic-cell.is-align-left .cell-content { text-align: left; }
+.dynamic-cell.is-align-center {
+  justify-content: center;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+.dynamic-cell.is-align-center .cell-content { text-align: center; }
+.dynamic-cell.is-align-right {
+  justify-content: flex-end;
+  padding-left: 20px;
+  padding-right: 22px;
+}
+.dynamic-cell.is-align-right .cell-content { text-align: right; }
+.dynamic-cell.is-editable { cursor: text; }
 .dynamic-cell.is-editable:hover { background: var(--el-fill-color-light); }
+.dynamic-cell.is-required-empty,
+.dynamic-cell.is-required-empty.is-editable:hover {
+  background: transparent !important;
+}
+.cell-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .required-mark { margin-right: 3px; color: var(--el-color-danger); }
-.dynamic-cell.is-required-empty { background: var(--el-color-danger-light-9); }
-:deep(.vxe-body--column.required-empty-cell) { background: var(--el-color-danger-light-9) !important; }
-.edit-hint, .saving-hint { position: absolute; right: 4px; font-size: 11px; }
-.edit-hint { color: var(--el-color-primary); opacity: 0; transition: opacity .15s; }
-.saving-hint { color: var(--el-color-warning); }
-.dynamic-cell:hover .edit-hint { opacity: .85; }
+:deep(.vxe-body--column.required-empty-cell) {
+  background-color: var(--el-color-danger-light-9);
+  transition: background-color .15s ease-in-out, filter .15s ease-in-out;
+}
+:deep(.vxe-body--column.required-empty-cell:hover) {
+  filter: brightness(0.96);
+}
+
+/* 图标采用绝对定位脱离文档流，杜绝任何对文字宽度的挤压与横向晃动 */
+.edit-hint, .saving-hint {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  pointer-events: none;
+}
+.edit-hint {
+  color: var(--el-color-primary);
+  opacity: 0;
+  transition: opacity .15s ease-in-out;
+}
+.dynamic-cell:hover .edit-hint {
+  opacity: .9;
+}
+.saving-hint {
+  color: var(--el-color-primary);
+}
+.saving-hint .is-loading {
+  animation: rotating 2s linear infinite;
+}
+@keyframes rotating {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
 .color-value { display: inline-flex; align-items: center; gap: 7px; }
 .color-value i { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--el-border-color); }
 .option-tag { margin-right: 5px; }
+.option-color-text { display: inline-flex; align-items: center; gap: 4px; }
+.color-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
 </style>

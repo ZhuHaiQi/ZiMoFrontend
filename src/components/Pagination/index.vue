@@ -8,6 +8,7 @@
       :page-sizes="pageSizes"
       :pager-count="pagerCount"
       :total="total"
+      :disabled="disabled"
       @size-change="handleSizeChange"
       @current-change="handleCurrentChange"
     />
@@ -54,6 +55,10 @@ const props = defineProps({
     default: true
   },
   hidden: {
+    type: Boolean,
+    default: false
+  },
+  disabled: {
     type: Boolean,
     default: false
   }

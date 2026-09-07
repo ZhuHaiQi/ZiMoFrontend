@@ -1,6 +1,6 @@
 <template>
   <div class="dynamic-cell-editor" @click.stop @keydown.esc.stop.prevent="cancel">
-    <div class="editor-control">
+    <div class="editor-control" :class="['is-align-' + (field.align || 'center')]">
       <el-input
         v-if="field.componentType === 'input' || field.componentType === 'textarea'"
         ref="controlRef"
@@ -25,38 +25,36 @@
       <el-select
         v-else-if="field.componentType === 'select' || field.componentType === 'multi-select'"
         ref="controlRef"
-        :model-value="modelValue"
+        v-model="editorValue"
         :multiple="field.componentType === 'multi-select'"
         :placeholder="placeholderOf(field)"
         v-bind="componentProps(field)"
         popper-class="vxe-table--ignore-clear"
         style="width: 100%"
-        @update:model-value="updateValue"
+        @clear="updateValue(['multi-select'].includes(field.componentType) ? [] : null)"
       >
         <el-option
           v-for="option in optionsOf(field)"
           :key="String(option.value)"
           :label="option.label"
-          :value="optionValue(field, option.value)"
+          :value="option.value"
         />
       </el-select>
       <el-radio-group
         v-else-if="field.componentType === 'radio'"
-        :model-value="modelValue"
+        v-model="editorValue"
         v-bind="componentProps(field)"
-        @update:model-value="updateValue"
       >
-        <el-radio v-for="option in optionsOf(field)" :key="String(option.value)" :value="optionValue(field, option.value)">
+        <el-radio v-for="option in optionsOf(field)" :key="String(option.value)" :value="option.value">
           {{ option.label }}
         </el-radio>
       </el-radio-group>
       <el-checkbox-group
         v-else-if="field.componentType === 'checkbox'"
-        :model-value="modelValue"
+        v-model="editorValue"
         v-bind="componentProps(field)"
-        @update:model-value="updateValue"
       >
-        <el-checkbox v-for="option in optionsOf(field)" :key="String(option.value)" :value="optionValue(field, option.value)">
+        <el-checkbox v-for="option in optionsOf(field)" :key="String(option.value)" :value="option.value">
           {{ option.label }}
         </el-checkbox>
       </el-checkbox-group>
@@ -111,14 +109,81 @@
 </template>
 
 <script setup name="DynamicCellEditor">
+import { fetchApiOptions } from '@/utils/dynamicSource'
+
 const props = defineProps({
   modelValue: { default: undefined },
   field: { type: Object, required: true },
-  dictOptions: { type: Object, default: () => ({}) }
+  dictOptions: { type: Object, default: () => ({}) },
+  cachedApiOptions: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
 const controlRef = ref()
+const apiOptions = ref([])
+
+const isChoiceComponent = computed(() => ['select', 'multi-select', 'radio', 'checkbox'].includes(props.field.componentType))
+const isMultiChoice = computed(() => ['multi-select', 'checkbox'].includes(props.field.componentType))
+
+/**
+ * 自适应对齐选项类型（彻底解决数字/字符串严格全等匹配失败导致回显为 1 的问题）
+ */
+const editorValue = computed({
+  get: () => {
+    const val = props.modelValue
+    if (val === undefined || val === null || val === '') {
+      return isMultiChoice.value ? [] : undefined
+    }
+    if (isChoiceComponent.value) {
+      const options = optionsOf(props.field)
+      if (isMultiChoice.value) {
+        const arr = Array.isArray(val) ? val : [val]
+        return arr.map(item => {
+          const matched = options.find(opt => String(opt.value) === String(item))
+          return matched !== undefined ? matched.value : item
+        })
+      } else {
+        const matched = options.find(opt => String(opt.value) === String(val))
+        return matched !== undefined ? matched.value : val
+      }
+    }
+    return val
+  },
+  set: (newVal) => {
+    updateValue(normalizeValueForField(props.field, newVal))
+  }
+})
+
+function normalizeValueForField(field, value) {
+  if (value === undefined || value === null || value === '') {
+    return ['multi-select', 'checkbox'].includes(field.componentType) ? [] : null
+  }
+  if (field.dataType === 'BOOLEAN') {
+    return value === true || value === 1 || value === '1' || value === 'true'
+  }
+  if (field.dataType === 'STRING') {
+    if (Array.isArray(value)) return value.map(v => String(v))
+    return String(value)
+  }
+  if (['INTEGER', 'DECIMAL'].includes(field.dataType)) {
+    if (Array.isArray(value)) return value.map(v => Number(v))
+    const num = Number(value)
+    return isNaN(num) ? value : num
+  }
+  return value
+}
+
+async function loadApiOptions() {
+  if (props.field.optionSource !== 'API') return
+  if (props.cachedApiOptions?.length) return
+  const componentProps = parseJson(props.field.componentPropsJson, {})
+  const apiConfig = componentProps.apiConfig
+  if (apiConfig?.url) {
+    apiOptions.value = await fetchApiOptions(apiConfig)
+  }
+}
+
+watch(() => props.field, () => loadApiOptions(), { immediate: true, deep: true })
 
 onMounted(() => nextTick(() => controlRef.value?.focus?.()))
 
@@ -148,19 +213,24 @@ function parseJson(value, fallback) {
 }
 
 function optionsOf(field) {
-  if (field.optionSource === 'DICT' && field.dictType) return props.dictOptions[field.dictType] || []
+  if (field.optionSource === 'DICT' && field.dictType) {
+    const list = props.dictOptions[field.dictType] || []
+    return list.map(opt => ({
+      ...opt,
+      label: opt.label ?? opt.dictLabel,
+      value: opt.value ?? opt.dictValue
+    }))
+  }
+  if (field.optionSource === 'API') {
+    return props.cachedApiOptions?.length ? props.cachedApiOptions : apiOptions.value
+  }
   return parseJson(field.optionsJson, [])
-}
-
-function optionValue(field, value) {
-  if (field.dataType === 'BOOLEAN') return value === true || value === 1 || value === '1' || value === 'true'
-  return value
 }
 
 function componentProps(field) {
   const result = { ...parseJson(field.componentPropsJson, {}) }
   delete result.span
-  if (['select', 'multi-select'].includes(field.componentType) && result.clearable === undefined) {
+  if (['input', 'select', 'multi-select', 'date-picker', 'datetime-picker'].includes(field.componentType) && result.clearable === undefined) {
     result.clearable = true
   }
   return result
@@ -174,6 +244,48 @@ function placeholderOf(field) {
 </script>
 
 <style scoped>
-.dynamic-cell-editor { display: flex; align-items: center; width: 100%; min-width: 0; }
-.editor-control { flex: 1; min-width: 0; }
+.dynamic-cell-editor {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  box-sizing: border-box;
+}
+.editor-control {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 32px;
+}
+.editor-control :deep(.el-input),
+.editor-control :deep(.el-select),
+.editor-control :deep(.el-input-number),
+.editor-control :deep(.el-date-editor) {
+  width: 100%;
+  height: 32px;
+  --el-component-size: 32px;
+}
+.editor-control :deep(.el-input__wrapper),
+.editor-control :deep(.el-select__wrapper) {
+  min-height: 32px;
+  height: 32px;
+  box-sizing: border-box;
+}
+.editor-control.is-align-left :deep(.el-input__inner),
+.editor-control.is-align-left :deep(.el-select__placeholder),
+.editor-control.is-align-left :deep(.el-select__selected-item) {
+  text-align: left;
+}
+.editor-control.is-align-center :deep(.el-input__inner),
+.editor-control.is-align-center :deep(.el-select__placeholder),
+.editor-control.is-align-center :deep(.el-select__selected-item) {
+  text-align: center;
+}
+.editor-control.is-align-right :deep(.el-input__inner),
+.editor-control.is-align-right :deep(.el-select__placeholder),
+.editor-control.is-align-right :deep(.el-select__selected-item) {
+  text-align: right;
+}
 </style>

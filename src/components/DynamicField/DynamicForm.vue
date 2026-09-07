@@ -1,8 +1,17 @@
 <template>
   <el-form ref="formRef" :model="formState" :rules="rules" :label-width="labelWidth" :disabled="disabled">
     <el-row :gutter="20">
-      <el-col v-for="field in visibleFields" :key="field.fieldKey" :span="fieldSpan(field)">
-        <el-form-item :label="field.fieldLabel" :prop="field.fieldKey">
+      <el-col
+        v-for="field in visibleFields"
+        :key="field.fieldKey"
+        :span="fieldSpan(field)"
+        :xs="24"
+        :sm="props.columns >= 4 ? 12 : (fieldSpan(field) <= 12 ? fieldSpan(field) : 24)"
+        :md="props.columns >= 4 ? 8 : fieldSpan(field)"
+        :lg="fieldSpan(field)"
+        :xl="fieldSpan(field)"
+      >
+        <el-form-item :label="field.fieldLabel" :prop="field.fieldKey" :required="field.required">
           <el-input
             v-if="field.componentType === 'input' || field.componentType === 'textarea'"
             v-model="formState[field.fieldKey]"
@@ -18,19 +27,31 @@
           />
           <el-select
             v-else-if="field.componentType === 'select' || field.componentType === 'multi-select'"
-            v-model="formState[field.fieldKey]"
+            :model-value="formFieldValue(field)"
             :multiple="field.componentType === 'multi-select'"
             :placeholder="placeholderOf(field)"
             v-bind="componentProps(field)"
             style="width: 100%"
+            @update:model-value="updateFormFieldValue(field, $event)"
+            @clear="updateFormFieldValue(field, ['multi-select'].includes(field.componentType) ? [] : '')"
           >
-            <el-option v-for="option in optionsOf(field)" :key="option.value" :label="option.label" :value="optionValue(field, option.value)" />
+            <el-option v-for="option in optionsOf(field)" :key="String(option.value)" :label="option.label" :value="option.value" />
           </el-select>
-          <el-radio-group v-else-if="field.componentType === 'radio'" v-model="formState[field.fieldKey]" v-bind="componentProps(field)">
-            <el-radio v-for="option in optionsOf(field)" :key="option.value" :value="optionValue(field, option.value)">{{ option.label }}</el-radio>
+          <el-radio-group
+            v-else-if="field.componentType === 'radio'"
+            :model-value="formFieldValue(field)"
+            v-bind="componentProps(field)"
+            @update:model-value="updateFormFieldValue(field, $event)"
+          >
+            <el-radio v-for="option in optionsOf(field)" :key="String(option.value)" :value="option.value">{{ option.label }}</el-radio>
           </el-radio-group>
-          <el-checkbox-group v-else-if="field.componentType === 'checkbox'" v-model="formState[field.fieldKey]" v-bind="componentProps(field)">
-            <el-checkbox v-for="option in optionsOf(field)" :key="option.value" :value="optionValue(field, option.value)">{{ option.label }}</el-checkbox>
+          <el-checkbox-group
+            v-else-if="field.componentType === 'checkbox'"
+            :model-value="formFieldValue(field)"
+            v-bind="componentProps(field)"
+            @update:model-value="updateFormFieldValue(field, $event)"
+          >
+            <el-checkbox v-for="option in optionsOf(field)" :key="String(option.value)" :value="option.value">{{ option.label }}</el-checkbox>
           </el-checkbox-group>
           <el-switch v-else-if="field.componentType === 'switch'" v-model="formState[field.fieldKey]" v-bind="componentProps(field)" />
           <el-date-picker
@@ -53,19 +74,39 @@
 </template>
 
 <script setup name="DynamicFieldForm">
+import { fetchApiOptions } from '@/utils/dynamicSource'
+
 const props = defineProps({
   fields: { type: Array, default: () => [] },
   modelValue: { type: Object, default: () => ({}) },
   dictOptions: { type: Object, default: () => ({}) },
   disabled: { type: Boolean, default: false },
   labelWidth: { type: [String, Number], default: '110px' },
-  columns: { type: Number, default: 2 }
+  columns: { type: Number, default: 2 },
+  ignoreCustomSpan: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['update:modelValue'])
 const formRef = ref()
 const syncing = ref(false)
 const formState = reactive({})
+const apiOptionMap = ref({})
+
+async function loadAllApiOptions() {
+  const apiFields = (props.fields || []).filter(f => f.optionSource === 'API')
+  if (!apiFields.length) return
+  const map = { ...apiOptionMap.value }
+  await Promise.all(apiFields.map(async field => {
+    const componentProps = parseJson(field.componentPropsJson, {})
+    const apiConfig = componentProps.apiConfig
+    if (apiConfig?.url) {
+      map[field.fieldKey] = await fetchApiOptions(apiConfig)
+    }
+  }))
+  apiOptionMap.value = map
+}
+
+watch(() => props.fields, () => loadAllApiOptions(), { immediate: true, deep: true })
 
 const visibleFields = computed(() => props.fields
   .filter(field => field.status !== '1' && field.formVisible !== false)
@@ -77,7 +118,10 @@ const rules = computed(() => {
     const custom = parseJson(field.validationJson, {})
     const itemRules = []
     if (field.required) {
-      itemRules.push({ required: true, message: `${field.fieldLabel}不能为空`, trigger: changeTrigger(field) })
+      const mode = custom.requiredMode || 'color'
+      if (mode === 'alert') {
+        itemRules.push({ required: true, message: `${field.fieldLabel}不能为空`, trigger: changeTrigger(field) })
+      }
     }
     const rule = {}
     ;['min', 'max', 'len'].forEach(key => {
@@ -88,6 +132,28 @@ const rules = computed(() => {
       rule.message = custom.message || `${field.fieldLabel}格式不正确`
       rule.trigger = changeTrigger(field)
       itemRules.push(rule)
+    }
+    if (Array.isArray(custom.rowUniqueFields) && custom.rowUniqueFields.length > 0) {
+      itemRules.push({
+        validator: (r, value, callback) => {
+          if (value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length)) {
+            return callback()
+          }
+          for (const otherKey of custom.rowUniqueFields) {
+            const otherVal = formState[otherKey]
+            if (otherVal === undefined || otherVal === null || otherVal === '' || (Array.isArray(otherVal) && !otherVal.length)) {
+              continue
+            }
+            if (JSON.stringify(value) === JSON.stringify(otherVal)) {
+              const otherField = props.fields.find(f => f.fieldKey === otherKey)
+              const otherLabel = otherField?.fieldLabel || otherKey
+              return callback(new Error(`不能与【${otherLabel}】的值重复`))
+            }
+          }
+          callback()
+        },
+        trigger: changeTrigger(field)
+      })
     }
     if (itemRules.length) result[field.fieldKey] = itemRules
   })
@@ -120,24 +186,74 @@ function parseJson(value, fallback) {
 }
 
 function optionsOf(field) {
-  if (field.optionSource === 'DICT' && field.dictType) return props.dictOptions[field.dictType] || []
+  if (field.optionSource === 'DICT' && field.dictType) {
+    const list = props.dictOptions[field.dictType] || []
+    return list.map(opt => ({
+      ...opt,
+      label: opt.label ?? opt.dictLabel,
+      value: opt.value ?? opt.dictValue
+    }))
+  }
+  if (field.optionSource === 'API') return apiOptionMap.value[field.fieldKey] || []
   return parseJson(field.optionsJson, [])
 }
-function optionValue(field, value) {
-  if (field.dataType === 'BOOLEAN') return value === true || value === 1 || value === '1' || value === 'true'
+
+function formFieldValue(field) {
+  const val = formState[field.fieldKey]
+  if (val === undefined || val === null || val === '') {
+    return ['multi-select', 'checkbox'].includes(field.componentType) ? [] : undefined
+  }
+  if (['select', 'multi-select', 'radio', 'checkbox'].includes(field.componentType)) {
+    const options = optionsOf(field)
+    if (['multi-select', 'checkbox'].includes(field.componentType)) {
+      const arr = Array.isArray(val) ? val : [val]
+      return arr.map(item => {
+        const matched = options.find(opt => String(opt.value) === String(item))
+        return matched !== undefined ? matched.value : item
+      })
+    }
+    const matched = options.find(opt => String(opt.value) === String(val))
+    return matched !== undefined ? matched.value : val
+  }
+  return val
+}
+
+function updateFormFieldValue(field, newVal) {
+  formState[field.fieldKey] = normalizeValueForField(field, newVal)
+}
+
+function normalizeValueForField(field, value) {
+  if (value === undefined || value === null || value === '') {
+    return ['multi-select', 'checkbox'].includes(field.componentType) ? [] : ''
+  }
+  if (field.dataType === 'BOOLEAN') {
+    return value === true || value === 1 || value === '1' || value === 'true'
+  }
+  if (field.dataType === 'STRING') {
+    if (Array.isArray(value)) return value.map(v => String(v))
+    return String(value)
+  }
+  if (['INTEGER', 'DECIMAL'].includes(field.dataType)) {
+    if (Array.isArray(value)) return value.map(v => Number(v))
+    const num = Number(value)
+    return isNaN(num) ? value : num
+  }
   return value
 }
 function componentProps(field) {
   const result = { ...parseJson(field.componentPropsJson, {}) }
   delete result.span
-  if (['select', 'multi-select'].includes(field.componentType) && result.clearable === undefined) {
+  if (['input', 'select', 'multi-select', 'date-picker', 'datetime-picker'].includes(field.componentType) && result.clearable === undefined) {
     result.clearable = true
   }
   return result
 }
 function fieldSpan(field) {
+  if (props.ignoreCustomSpan) {
+    return Math.floor(24 / Math.max(1, props.columns))
+  }
   const span = Number(parseJson(field.componentPropsJson, {}).span)
-  return span >= 1 && span <= 24 ? span : 24 / Math.max(1, props.columns)
+  return span >= 1 && span <= 24 ? span : Math.floor(24 / Math.max(1, props.columns))
 }
 function placeholderOf(field) {
   if (field.placeholder) return field.placeholder

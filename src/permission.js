@@ -39,22 +39,30 @@ router.beforeEach((to, from, next) => {
       if (useUserStore().roles.length === 0) {
         isRelogin.show = true
         // 判断当前用户是否已拉取完user_info信息
-        useUserStore().getInfo().then(() => {
-          isRelogin.show = false
-          usePermissionStore().generateRoutes().then(accessRoutes => {
+        return useUserStore().getInfo().then(() => {
+          return usePermissionStore().generateRoutes().then(accessRoutes => {
             // 根据roles权限生成可访问的路由表
             accessRoutes.forEach(route => {
               if (!isHttp(route.path)) {
                 router.addRoute(route) // 动态添加可访问路由表
               }
             })
+            isRelogin.show = false
             next({ ...to, replace: true }) // hack方法 确保addRoutes已完成
           })
-        }).catch(err => {
-          useUserStore().logOut().then(() => {
-            ElMessage.error(err)
-            next({ path: '/' })
-          })
+        }).catch(async err => {
+          // 失败恢复期间由守卫处理登录跳转，避免退出请求再弹出重登提示。
+          isRelogin.show = true
+          try {
+            await useUserStore().logOut()
+          } catch {
+            // 退出接口不可用时，logOut 仍会清理本地登录状态。
+          } finally {
+            isRelogin.show = false
+            ElMessage.error(err?.message || err || '加载用户权限失败，请重新登录')
+            next({ path: '/login', query: { redirect: to.fullPath }, replace: true })
+            NProgress.done()
+          }
         })
       } else {
         next()

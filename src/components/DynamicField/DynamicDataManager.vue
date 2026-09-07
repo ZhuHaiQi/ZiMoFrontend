@@ -1,10 +1,28 @@
 <template>
   <div class="dynamic-data-manager">
     <div v-if="searchFields.length" class="search-panel">
-      <dynamic-form v-model="searchModel" :fields="searchFields" :dict-options="dictOptions" :columns="3" />
+      <dynamic-form
+        v-model="searchModel"
+        :fields="displayedSearchFields"
+        :dict-options="dictOptions"
+        :columns="4"
+        :ignore-custom-span="true"
+      />
       <div class="search-actions">
-        <el-button type="primary" icon="Search" @click="handleQuery">查询</el-button>
-        <el-button icon="Refresh" @click="resetQuery">重置</el-button>
+        <el-button type="primary" icon="Search" :loading="loadAction === 'query'" :disabled="loading" @click="handleQuery">查询</el-button>
+        <el-button icon="Refresh" :loading="loadAction === 'reset'" :disabled="loading" @click="resetQuery">重置</el-button>
+        <el-button
+          v-if="searchFields.length > SEARCH_FOLD_LIMIT"
+          link
+          type="primary"
+          class="expand-btn"
+          @click="searchExpanded = !searchExpanded"
+        >
+          <span>{{ searchExpanded ? '收起' : '展开' }}</span>
+          <el-icon class="el-icon--right">
+            <component :is="searchExpanded ? ArrowUp : ArrowDown" />
+          </el-icon>
+        </el-button>
       </div>
     </div>
 
@@ -13,7 +31,7 @@
         <strong>{{ schema.tableName }}</strong><span>动态数据</span>
         <small>点击单元格按需加载控件，失去焦点自动保存，Esc 取消</small>
       </div>
-      <el-button type="primary" icon="Plus" @click="handleAdd" v-hasPermi="['system:dynamic:data:add']">
+      <el-button type="primary" icon="Plus" :disabled="loading" @click="handleAdd" v-hasPermi="['system:dynamic:data:add']">
         表格内新增
       </el-button>
     </div>
@@ -25,19 +43,23 @@
       :dict-options="dictOptions"
       :loading="loading"
       :editable="canEditCell"
+      :show-row-number="schema.showRowNumber"
+      :sequence-start="(query.pageNum - 1) * query.pageSize"
+      :default-sort-field="schema.defaultSortField || ''"
+      :default-sort-order="schema.defaultSortOrder || 'desc'"
       @sort-change="handleSort"
       @cell-change="handleCellChange"
     >
       <template #version="{ row }">{{ row._isDraft ? '-' : row._version }}</template>
       <template #actions="{ row }">
           <template v-if="row._isDraft">
-            <el-button link type="primary" icon="Check" :loading="row._saving" @mousedown.prevent.stop @click.stop="saveDraft(row)">
+            <el-button link type="primary" icon="Check" :loading="row._submitting" :disabled="row._submitting" @mousedown.prevent.stop @click.stop="saveDraft(row)">
               保存新增
             </el-button>
-            <el-button link icon="Close" :disabled="row._saving" @mousedown.prevent.stop @click.stop="cancelDraft(row)">取消</el-button>
+            <el-button link icon="Close" :disabled="row._submitting" @mousedown.prevent.stop @click.stop="cancelDraft(row)">取消</el-button>
           </template>
           <template v-else>
-            <el-button link type="danger" icon="Delete" :disabled="row._saving" @click.stop="handleDelete(row)" v-hasPermi="['system:dynamic:data:remove']">
+            <el-button link type="danger" icon="Delete" :loading="row._deleting" :disabled="row._saving || row._deleting" @click.stop="handleDelete(row)" v-hasPermi="['system:dynamic:data:remove']">
               删除
             </el-button>
           </template>
@@ -48,12 +70,14 @@
       :total="total"
       v-model:page="query.pageNum"
       v-model:limit="query.pageSize"
+      :disabled="loading"
       @pagination="loadRecords"
     />
   </div>
 </template>
 
 <script setup name="DynamicDataManager">
+import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import DynamicTable from './DynamicTable.vue'
 import DynamicForm from './DynamicForm.vue'
 import { pageDynamicRecords, addDynamicRecord, updateDynamicRecord, deleteDynamicRecord } from '@/api/system/dynamicTable'
@@ -62,6 +86,7 @@ const props = defineProps({
   schema: { type: Object, required: true },
   dictOptions: { type: Object, default: () => ({}) }
 })
+const emit = defineEmits(['ready'])
 
 const { proxy } = getCurrentInstance()
 const loading = ref(false)
@@ -70,9 +95,14 @@ const total = ref(0)
 const searchModel = ref({})
 const dynamicTableRef = ref()
 const draftSequence = ref(0)
+const loadAction = ref('')
+const initialLoadPending = ref(true)
 const pendingSaves = new Set()
 const rowSaveChains = new Map()
 const query = reactive({ pageNum: 1, pageSize: 20, sortField: '', sortOrder: 'desc' })
+
+const SEARCH_FOLD_LIMIT = 8
+const searchExpanded = ref(false)
 
 const activeFields = computed(() => (props.schema.fields || [])
   .filter(field => field.status !== '1')
@@ -83,7 +113,20 @@ const editableFields = computed(() => activeFields.value
 
 const searchFields = computed(() => activeFields.value
   .filter(field => field.searchable)
-  .map(field => ({ ...field, required: false, formVisible: true })))
+  .map(field => ({
+    ...field,
+    required: false,
+    defaultValue: '',
+    validationJson: '{}',
+    formVisible: true
+  })))
+
+const displayedSearchFields = computed(() => {
+  if (searchFields.value.length <= SEARCH_FOLD_LIMIT || searchExpanded.value) {
+    return searchFields.value
+  }
+  return searchFields.value.slice(0, SEARCH_FOLD_LIMIT)
+})
 
 function buildFilters() {
   return searchFields.value.flatMap(field => {
@@ -98,14 +141,19 @@ function buildFilters() {
 }
 
 async function loadRecords() {
-  await flushEditing()
+  if (loading.value) return
   loading.value = true
   try {
+    await flushEditing()
     const response = await pageDynamicRecords(props.schema.tableCode, { ...query, filters: buildFilters() })
     rows.value = (response.rows || []).map(mapRecord)
     total.value = response.total || 0
   } finally {
     loading.value = false
+    if (initialLoadPending.value) {
+      initialLoadPending.value = false
+      emit('ready')
+    }
   }
 }
 
@@ -118,27 +166,55 @@ function mapRecord(record) {
     _clientId: `record-${record.recordId}`,
     _isDraft: false,
     _saving: false,
+    _submitting: false,
+    _deleting: false,
     _savingFieldKey: null
   }
 }
 
-function handleQuery() {
+async function handleQuery() {
+  if (loading.value) return
+  loadAction.value = 'query'
   query.pageNum = 1
-  loadRecords()
+  try {
+    await loadRecords()
+  } finally {
+    loadAction.value = ''
+  }
 }
 
-function resetQuery() {
+async function resetQuery() {
+  if (loading.value) return
+  loadAction.value = 'reset'
   searchModel.value = {}
-  handleQuery()
+  query.pageNum = 1
+  try {
+    await loadRecords()
+  } finally {
+    loadAction.value = ''
+  }
 }
 
-function handleSort({ prop, order }) {
-  query.sortField = order ? prop : ''
-  query.sortOrder = order === 'ascending' ? 'asc' : 'desc'
+async function handleSort({ prop, order }) {
+  if (!order) {
+    resetDefaultSort()
+    await dynamicTableRef.value?.applySort(query.sortField, query.sortOrder)
+  } else {
+    query.sortField = prop
+    query.sortOrder = order === 'ascending' ? 'asc' : 'desc'
+  }
   loadRecords()
+}
+
+function resetDefaultSort() {
+  const defaultField = activeFields.value.find(field => field.fieldKey === props.schema.defaultSortField
+    && field.sortable)
+  query.sortField = defaultField?.fieldKey || ''
+  query.sortOrder = defaultField && props.schema.defaultSortOrder === 'asc' ? 'asc' : 'desc'
 }
 
 function canEditCell(row) {
+  if (row._submitting || row._deleting) return false
   return row._isDraft
     ? proxy.$auth.hasPermi('system:dynamic:data:add')
     : proxy.$auth.hasPermi('system:dynamic:data:edit')
@@ -154,6 +230,8 @@ function handleAdd() {
     _clientId: `draft-${Date.now()}-${++draftSequence.value}`,
     _isDraft: true,
     _saving: false,
+    _submitting: false,
+    _deleting: false,
     _savingFieldKey: null,
     _status: '0',
     _version: 0
@@ -209,12 +287,23 @@ async function saveCell({ row, field, value, originalValue }) {
     return true
   }
 
+  // 基础字段校验（如强校验模式必填校验、长度限制、正则）
   const message = validateField(field, value)
   if (message) {
-    // 清空必填字段也会走到这里，必须给出提示，否则用户只会看到值无声回退。
     proxy.$modal.msgError(message)
+    row[field.fieldKey] = cloneValue(originalValue)
     return false
   }
+
+  // 校验同行动行内互斥字段（值不能重复）
+  const uniqueMessage = validateRowUnique(row, field, value)
+  if (uniqueMessage) {
+    proxy.$modal.msgError(uniqueMessage)
+    return false
+  }
+
+  // 先在前端立即乐观更新，展示用户输入的新值，避免等待接口返回期间跳回旧值闪烁
+  row[field.fieldKey] = cloneValue(value)
 
   try {
     // 后端按动态表完整字段执行更新，因此合并当前单元格后提交整行，避免其它列被覆盖为空。
@@ -228,7 +317,8 @@ async function saveCell({ row, field, value, originalValue }) {
     replaceWithServerRecord(row, response.data, field.fieldKey, value)
     return true
   } catch {
-    // 全局请求拦截器负责展示后端错误；当前行保持服务端保存前的值。
+    // 全局请求拦截器负责展示后端错误；请求失败时回滚为原始值
+    row[field.fieldKey] = cloneValue(originalValue)
     return false
   }
 }
@@ -239,22 +329,36 @@ async function flushEditing() {
 }
 
 async function saveDraft(row) {
+  if (row._submitting) return
+  row._submitting = true
   // 新增行在浏览器内暂存，用户确认保存前不会产生逐单元格网络请求。
-  await dynamicTableRef.value?.finishEdit(row)
-
-  for (const field of activeFields.value) {
-    const message = validateField(field, row[field.fieldKey])
-    if (!message) continue
-    if (field.required && isEmpty(row[field.fieldKey])) {
-      await nextTick()
-      await dynamicTableRef.value?.startEdit(row, field.fieldKey)
-      return
-    }
-    return proxy.$modal.msgError(message)
-  }
-
-  row._saving = true
   try {
+    await dynamicTableRef.value?.finishEdit(row)
+
+    for (const field of activeFields.value) {
+      const message = validateField(field, row[field.fieldKey])
+      if (!message) continue
+      if (field.required && isEmpty(row[field.fieldKey])) {
+        const mode = getFieldRequiredMode(field)
+        if (mode === 'alert') {
+          row._submitting = false
+          await nextTick()
+          await dynamicTableRef.value?.startEdit(row, field.fieldKey)
+          return proxy.$modal.msgError(`【${field.fieldLabel}】为必填项，请填写`)
+        }
+      }
+      return proxy.$modal.msgError(message)
+    }
+
+    // 校验整行是否存在同行互斥字段冲突
+    const uniqueConflict = validateAllRowUnique(row)
+    if (uniqueConflict) {
+      row._submitting = false
+      await nextTick()
+      await dynamicTableRef.value?.startEdit(row, uniqueConflict.field.fieldKey)
+      return proxy.$modal.msgError(uniqueConflict.error)
+    }
+
     const response = await addDynamicRecord(props.schema.tableCode, { data: buildRowData(row) })
     if (response.data?.recordId) {
       // 保留 VXE Table 当前行引用，只把草稿内容就地转换为服务端正式记录。
@@ -265,7 +369,7 @@ async function saveDraft(row) {
     }
     proxy.$modal.msgSuccess('新增成功')
   } finally {
-    row._saving = false
+    row._submitting = false
   }
 }
 
@@ -279,7 +383,10 @@ async function cancelDraft(row) {
 function buildRowData(row, overrideKey, overrideValue) {
   const data = {}
   activeFields.value.forEach(field => {
-    const value = field.fieldKey === overrideKey ? overrideValue : row[field.fieldKey]
+    let value = field.fieldKey === overrideKey ? overrideValue : row[field.fieldKey]
+    if (field.fieldKey === overrideKey && (value === undefined || value === '')) {
+      value = null
+    }
     if (value !== undefined) data[field.fieldKey] = cloneValue(value)
   })
   return data
@@ -288,33 +395,49 @@ function buildRowData(row, overrideKey, overrideValue) {
 function replaceWithServerRecord(row, record, fallbackKey, fallbackValue) {
   // 优先采用服务端返回的新版本号，保证下一次编辑继续参与乐观锁校验。
   if (record?.recordId) {
-    const clientId = row._clientId
-    const saving = row._saving
-    const savingFieldKey = row._savingFieldKey
-    const mapped = mapRecord(record)
-    Object.keys(row).forEach(key => delete row[key])
-    // 行对象及 key 都保持稳定，避免 VXE Table 继续缓存草稿插槽。
-    Object.assign(row, mapped, { _clientId: clientId, _saving: saving, _savingFieldKey: savingFieldKey })
+    if (record.data && typeof record.data === 'object') {
+      Object.assign(row, record.data)
+    }
+    row._recordId = record.recordId
+    row._version = record.version
+    row._status = record.status
+    row._isDraft = false
     return
   }
-  row[fallbackKey] = cloneValue(fallbackValue)
-  row._version += 1
+  if (fallbackKey) {
+    row[fallbackKey] = cloneValue(fallbackValue)
+  }
+  row._version = (row._version || 0) + 1
 }
 
 async function handleDelete(row) {
+  if (row._deleting || row._saving) return
+  row._deleting = true
   try {
-    await proxy.$modal.confirm('确定删除这条动态数据吗？')
-  } catch {
-    return
+    try {
+      await proxy.$modal.confirm('确定删除这条动态数据吗？')
+    } catch {
+      return
+    }
+    await dynamicTableRef.value?.cancelEdit(row)
+    await deleteDynamicRecord(props.schema.tableCode, row._recordId, row._version)
+    proxy.$modal.msgSuccess('删除成功')
+    await loadRecords()
+  } finally {
+    row._deleting = false
   }
-  await dynamicTableRef.value?.cancelEdit(row)
-  await deleteDynamicRecord(props.schema.tableCode, row._recordId, row._version)
-  proxy.$modal.msgSuccess('删除成功')
-  await loadRecords()
+}
+
+function getFieldRequiredMode(field) {
+  const validation = parseJson(field?.validationJson, {})
+  return validation.requiredMode || 'color'
 }
 
 function validateField(field, value) {
-  if (field.required && isEmpty(value)) return `${field.fieldLabel}不能为空`
+  if (field.required && isEmpty(value)) {
+    const mode = getFieldRequiredMode(field)
+    return mode === 'alert' ? `【${field.fieldLabel}】为必填项，不能为空` : ''
+  }
   if (isEmpty(value)) return ''
   const rule = parseJson(field.validationJson, {})
   const comparable = ['INTEGER', 'DECIMAL'].includes(field.dataType) ? Number(value) : String(value).length
@@ -329,6 +452,43 @@ function validateField(field, value) {
     }
   }
   return ''
+}
+
+function validateRowUnique(row, field, value) {
+  if (isEmpty(value)) return ''
+  const validation = parseJson(field.validationJson, {})
+  const uniqueKeys = validation.rowUniqueFields
+  if (!Array.isArray(uniqueKeys) || !uniqueKeys.length) return ''
+
+  for (const otherKey of uniqueKeys) {
+    if (otherKey === field.fieldKey) continue
+    const otherVal = row[otherKey]
+    if (isEmpty(otherVal)) continue
+    if (sameValue(value, otherVal)) {
+      const otherField = activeFields.value.find(f => f.fieldKey === otherKey)
+      const otherLabel = otherField?.fieldLabel || otherKey
+      return `【${field.fieldLabel}】的值不能与同行的【${otherLabel}】重复`
+    }
+  }
+  return ''
+}
+
+function validateAllRowUnique(row) {
+  for (const field of activeFields.value) {
+    const value = row[field.fieldKey]
+    const err = validateRowUnique(row, field, value)
+    if (err) {
+      return { error: err, field }
+    }
+  }
+  return null
+}
+
+function hasRequiredEmptyField(row, overrideKey, overrideValue) {
+  return activeFields.value.some(field => {
+    const value = field.fieldKey === overrideKey ? overrideValue : row[field.fieldKey]
+    return field.required && isEmpty(value)
+  })
 }
 
 function defaultValueOf(field) {
@@ -362,15 +522,18 @@ function sameValue(left, right) {
 }
 
 watch(() => props.schema.tableId, () => {
+  searchExpanded.value = false
   searchModel.value = {}
   query.pageNum = 1
+  resetDefaultSort()
   loadRecords()
 }, { immediate: true })
 </script>
 
 <style scoped>
 .search-panel { padding: 18px 18px 8px; margin-bottom: 16px; background: var(--el-fill-color-extra-light); border-radius: 8px; }
-.search-actions { display: flex; justify-content: flex-end; margin: -8px 0 8px; }
+.search-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin: -4px 0 8px; }
+.expand-btn { margin-left: 4px; font-size: 13px; display: inline-flex; align-items: center; }
 .data-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
 .data-toolbar strong { margin-right: 10px; font-size: 16px; }
 .data-toolbar span { color: var(--el-text-color-secondary); font-size: 12px; }

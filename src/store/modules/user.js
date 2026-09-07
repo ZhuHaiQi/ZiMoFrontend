@@ -74,18 +74,16 @@ const useUserStore = defineStore(
         })
       },
       // 退出系统
-      logOut() {
-        return new Promise((resolve, reject) => {
-          logout(this.token).then(() => {
-            this.token = ''
-            this.roles = []
-            this.permissions = []
-            removeToken()
-            resolve()
-          }).catch(error => {
-            reject(error)
-          })
-        })
+      async logOut() {
+        try {
+          await logout(this.token)
+        } finally {
+          // 后端不可用时也必须清理本地会话，避免登录跳转循环。
+          this.token = ''
+          this.roles = []
+          this.permissions = []
+          removeToken()
+        }
       }
     }
   })

@@ -1,5 +1,6 @@
 <template>
-  <div class="dynamic-cell-editor" @click.stop @keydown.esc.stop.prevent="cancel">
+  <!-- 先于子控件捕获 Esc，避免 el-select 拦截事件后只关闭下拉面板。 -->
+  <div class="dynamic-cell-editor" @click.stop @keydown.esc.capture.stop.prevent="cancel">
     <div class="editor-control" :class="['is-align-' + (field.align || 'center')]">
       <el-input
         v-if="field.componentType === 'input' || field.componentType === 'textarea'"
@@ -34,7 +35,7 @@
         @clear="updateValue(['multi-select'].includes(field.componentType) ? [] : null)"
       >
         <el-option
-          v-for="option in optionsOf(field)"
+          v-for="option in options"
           :key="String(option.value)"
           :label="option.label"
           :value="option.value"
@@ -45,7 +46,7 @@
         v-model="editorValue"
         v-bind="componentProps(field)"
       >
-        <el-radio v-for="option in optionsOf(field)" :key="String(option.value)" :value="option.value">
+        <el-radio v-for="option in options" :key="String(option.value)" :value="option.value">
           {{ option.label }}
         </el-radio>
       </el-radio-group>
@@ -54,7 +55,7 @@
         v-model="editorValue"
         v-bind="componentProps(field)"
       >
-        <el-checkbox v-for="option in optionsOf(field)" :key="String(option.value)" :value="option.value">
+        <el-checkbox v-for="option in options" :key="String(option.value)" :value="option.value">
           {{ option.label }}
         </el-checkbox>
       </el-checkbox-group>
@@ -109,81 +110,20 @@
 </template>
 
 <script setup name="DynamicCellEditor">
-import { fetchApiOptions } from '@/utils/dynamicSource'
+import { choiceValue, normalizeValueForField, componentProps, placeholderOf } from '@/utils/dynamicField'
 
 const props = defineProps({
   modelValue: { default: undefined },
   field: { type: Object, required: true },
-  dictOptions: { type: Object, default: () => ({}) },
-  cachedApiOptions: { type: Array, default: () => [] }
+  options: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['update:modelValue', 'save', 'cancel'])
 const controlRef = ref()
-const apiOptions = ref([])
-
-const isChoiceComponent = computed(() => ['select', 'multi-select', 'radio', 'checkbox'].includes(props.field.componentType))
-const isMultiChoice = computed(() => ['multi-select', 'checkbox'].includes(props.field.componentType))
-
-/**
- * 自适应对齐选项类型（彻底解决数字/字符串严格全等匹配失败导致回显为 1 的问题）
- */
 const editorValue = computed({
-  get: () => {
-    const val = props.modelValue
-    if (val === undefined || val === null || val === '') {
-      return isMultiChoice.value ? [] : undefined
-    }
-    if (isChoiceComponent.value) {
-      const options = optionsOf(props.field)
-      if (isMultiChoice.value) {
-        const arr = Array.isArray(val) ? val : [val]
-        return arr.map(item => {
-          const matched = options.find(opt => String(opt.value) === String(item))
-          return matched !== undefined ? matched.value : item
-        })
-      } else {
-        const matched = options.find(opt => String(opt.value) === String(val))
-        return matched !== undefined ? matched.value : val
-      }
-    }
-    return val
-  },
-  set: (newVal) => {
-    updateValue(normalizeValueForField(props.field, newVal))
-  }
+  get: () => choiceValue(props.field, props.modelValue, props.options),
+  set: value => updateValue(normalizeValueForField(props.field, value))
 })
-
-function normalizeValueForField(field, value) {
-  if (value === undefined || value === null || value === '') {
-    return ['multi-select', 'checkbox'].includes(field.componentType) ? [] : null
-  }
-  if (field.dataType === 'BOOLEAN') {
-    return value === true || value === 1 || value === '1' || value === 'true'
-  }
-  if (field.dataType === 'STRING') {
-    if (Array.isArray(value)) return value.map(v => String(v))
-    return String(value)
-  }
-  if (['INTEGER', 'DECIMAL'].includes(field.dataType)) {
-    if (Array.isArray(value)) return value.map(v => Number(v))
-    const num = Number(value)
-    return isNaN(num) ? value : num
-  }
-  return value
-}
-
-async function loadApiOptions() {
-  if (props.field.optionSource !== 'API') return
-  if (props.cachedApiOptions?.length) return
-  const componentProps = parseJson(props.field.componentPropsJson, {})
-  const apiConfig = componentProps.apiConfig
-  if (apiConfig?.url) {
-    apiOptions.value = await fetchApiOptions(apiConfig)
-  }
-}
-
-watch(() => props.field, () => loadApiOptions(), { immediate: true, deep: true })
 
 onMounted(() => nextTick(() => controlRef.value?.focus?.()))
 
@@ -207,40 +147,6 @@ function handleTextEnter(event) {
   commit()
 }
 
-function parseJson(value, fallback) {
-  if (!value) return fallback
-  try { return typeof value === 'string' ? JSON.parse(value) : value } catch { return fallback }
-}
-
-function optionsOf(field) {
-  if (field.optionSource === 'DICT' && field.dictType) {
-    const list = props.dictOptions[field.dictType] || []
-    return list.map(opt => ({
-      ...opt,
-      label: opt.label ?? opt.dictLabel,
-      value: opt.value ?? opt.dictValue
-    }))
-  }
-  if (field.optionSource === 'API') {
-    return props.cachedApiOptions?.length ? props.cachedApiOptions : apiOptions.value
-  }
-  return parseJson(field.optionsJson, [])
-}
-
-function componentProps(field) {
-  const result = { ...parseJson(field.componentPropsJson, {}) }
-  delete result.span
-  if (['input', 'select', 'multi-select', 'date-picker', 'datetime-picker'].includes(field.componentType) && result.clearable === undefined) {
-    result.clearable = true
-  }
-  return result
-}
-
-function placeholderOf(field) {
-  if (field.placeholder) return field.placeholder
-  return ['select', 'multi-select', 'date-picker', 'datetime-picker'].includes(field.componentType)
-    ? `请选择${field.fieldLabel}` : `请输入${field.fieldLabel}`
-}
 </script>
 
 <style scoped>

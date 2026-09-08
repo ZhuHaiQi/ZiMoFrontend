@@ -78,6 +78,7 @@
 
 <script setup name="DynamicDataManager">
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import { parseJson, isEmpty, defaultValueOf, isTableFieldEditable } from '@/utils/dynamicField'
 import DynamicTable from './DynamicTable.vue'
 import DynamicForm from './DynamicForm.vue'
 import { pageDynamicRecords, addDynamicRecord, updateDynamicRecord, deleteDynamicRecord } from '@/api/system/dynamicTable'
@@ -108,8 +109,8 @@ const activeFields = computed(() => (props.schema.fields || [])
   .filter(field => field.status !== '1')
   .sort((a, b) => (a.sort || 0) - (b.sort || 0)))
 
-const editableFields = computed(() => activeFields.value
-  .filter(field => field.listVisible !== false && field.formVisible !== false))
+const editableFields = computed(() => activeFields.value.filter(isTableFieldEditable))
+const editableFieldKeys = computed(() => new Set(editableFields.value.map(field => field.fieldKey)))
 
 const searchFields = computed(() => activeFields.value
   .filter(field => field.searchable)
@@ -213,8 +214,8 @@ function resetDefaultSort() {
   query.sortOrder = defaultField && props.schema.defaultSortOrder === 'asc' ? 'asc' : 'desc'
 }
 
-function canEditCell(row) {
-  if (row._submitting || row._deleting) return false
+function canEditCell(row, field) {
+  if (!editableFieldKeys.value.has(field.fieldKey) || row._submitting || row._deleting) return false
   return row._isDraft
     ? proxy.$auth.hasPermi('system:dynamic:data:add')
     : proxy.$auth.hasPermi('system:dynamic:data:edit')
@@ -255,6 +256,7 @@ function focusFirstCell(row) {
 
 /** 将 VXE 的编辑关闭事件加入保存队列，翻页和查询前会等待队列清空。 */
 function handleCellChange(payload) {
+  if (!editableFieldKeys.value.has(payload.field.fieldKey)) return
   if (sameValue(payload.value, payload.originalValue)) return
   if (payload.row._isDraft) {
     saveCell(payload)
@@ -280,6 +282,7 @@ function handleCellChange(payload) {
 }
 
 async function saveCell({ row, field, value, originalValue }) {
+  if (!editableFieldKeys.value.has(field.fieldKey)) return false
   if (sameValue(value, originalValue)) return true
   // 草稿先保留用户输入，必填空值由单元格浅红背景提示，统一在保存新增时拦截。
   if (row._isDraft) {
@@ -482,34 +485,6 @@ function validateAllRowUnique(row) {
     }
   }
   return null
-}
-
-function hasRequiredEmptyField(row, overrideKey, overrideValue) {
-  return activeFields.value.some(field => {
-    const value = field.fieldKey === overrideKey ? overrideValue : row[field.fieldKey]
-    return field.required && isEmpty(value)
-  })
-}
-
-function defaultValueOf(field) {
-  if (field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== '') {
-    if (field.dataType === 'BOOLEAN') return ['true', '1'].includes(String(field.defaultValue).toLowerCase())
-    if (['INTEGER', 'DECIMAL'].includes(field.dataType)) return Number(field.defaultValue)
-    if (field.dataType === 'JSON') return parseJson(field.defaultValue, [])
-    return field.defaultValue
-  }
-  if (field.dataType === 'BOOLEAN') return false
-  if (field.dataType === 'JSON') return []
-  return undefined
-}
-
-function parseJson(value, fallback) {
-  if (!value) return fallback
-  try { return typeof value === 'string' ? JSON.parse(value) : value } catch { return fallback }
-}
-
-function isEmpty(value) {
-  return value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length)
 }
 
 function cloneValue(value) {

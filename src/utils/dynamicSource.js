@@ -27,6 +27,7 @@ export async function fetchApiOptions(apiConfig, force = false) {
   if (!apiConfig || !apiConfig.url) return []
 
   const url = String(apiConfig.url).trim()
+  if (!url) return []
   const method = (apiConfig.method || 'GET').toUpperCase()
   let params = apiConfig.params || {}
   if (typeof params === 'string') {
@@ -57,9 +58,10 @@ export async function fetchApiOptions(apiConfig, force = false) {
     reqConfig.data = params
   }
 
-  try {
+  // 缓存进行中的 Promise，使表格、搜索表单和预览共享同一次请求。
+  const pending = (async () => {
     const response = await request(reqConfig)
-    let rawList = []
+    let rawList
 
     if (dataField) {
       const customData = getByPath(response, dataField)
@@ -68,7 +70,7 @@ export async function fetchApiOptions(apiConfig, force = false) {
       }
     }
 
-    if (!rawList.length) {
+    if (!rawList) {
       if (Array.isArray(response)) {
         rawList = response
       } else if (Array.isArray(response?.data)) {
@@ -98,12 +100,15 @@ export async function fetchApiOptions(apiConfig, force = false) {
       }
     }).filter(Boolean)
 
-    apiOptionsCache.set(cacheKey, options)
     return options
-  } catch (error) {
+  })().catch(error => {
+    // 旧请求失败不能移除强制刷新创建的新缓存，失败请求允许下次重试。
+    if (apiOptionsCache.get(cacheKey) === pending) apiOptionsCache.delete(cacheKey)
     console.error('拉取动态接口选项失败:', url, error)
     return []
-  }
+  })
+  apiOptionsCache.set(cacheKey, pending)
+  return pending
 }
 
 /**

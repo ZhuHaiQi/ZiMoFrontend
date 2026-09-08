@@ -74,7 +74,8 @@
 </template>
 
 <script setup name="DynamicFieldForm">
-import { fetchApiOptions } from '@/utils/dynamicSource'
+import { parseJson, choiceValue, normalizeValueForField, componentProps, placeholderOf, defaultValueOf } from '@/utils/dynamicField'
+import { useFieldOptions } from './useFieldOptions'
 
 const props = defineProps({
   fields: { type: Array, default: () => [] },
@@ -90,23 +91,7 @@ const emit = defineEmits(['update:modelValue'])
 const formRef = ref()
 const syncing = ref(false)
 const formState = reactive({})
-const apiOptionMap = ref({})
-
-async function loadAllApiOptions() {
-  const apiFields = (props.fields || []).filter(f => f.optionSource === 'API')
-  if (!apiFields.length) return
-  const map = { ...apiOptionMap.value }
-  await Promise.all(apiFields.map(async field => {
-    const componentProps = parseJson(field.componentPropsJson, {})
-    const apiConfig = componentProps.apiConfig
-    if (apiConfig?.url) {
-      map[field.fieldKey] = await fetchApiOptions(apiConfig)
-    }
-  }))
-  apiOptionMap.value = map
-}
-
-watch(() => props.fields, () => loadAllApiOptions(), { immediate: true, deep: true })
+const { optionsOf } = useFieldOptions(() => props.fields, () => props.dictOptions)
 
 const visibleFields = computed(() => props.fields
   .filter(field => field.status !== '1' && field.formVisible !== false)
@@ -180,74 +165,14 @@ function initializeDefaults() {
   })
 }
 
-function parseJson(value, fallback) {
-  if (!value) return fallback
-  try { return typeof value === 'string' ? JSON.parse(value) : value } catch { return fallback }
-}
-
-function optionsOf(field) {
-  if (field.optionSource === 'DICT' && field.dictType) {
-    const list = props.dictOptions[field.dictType] || []
-    return list.map(opt => ({
-      ...opt,
-      label: opt.label ?? opt.dictLabel,
-      value: opt.value ?? opt.dictValue
-    }))
-  }
-  if (field.optionSource === 'API') return apiOptionMap.value[field.fieldKey] || []
-  return parseJson(field.optionsJson, [])
-}
-
 function formFieldValue(field) {
-  const val = formState[field.fieldKey]
-  if (val === undefined || val === null || val === '') {
-    return ['multi-select', 'checkbox'].includes(field.componentType) ? [] : undefined
-  }
-  if (['select', 'multi-select', 'radio', 'checkbox'].includes(field.componentType)) {
-    const options = optionsOf(field)
-    if (['multi-select', 'checkbox'].includes(field.componentType)) {
-      const arr = Array.isArray(val) ? val : [val]
-      return arr.map(item => {
-        const matched = options.find(opt => String(opt.value) === String(item))
-        return matched !== undefined ? matched.value : item
-      })
-    }
-    const matched = options.find(opt => String(opt.value) === String(val))
-    return matched !== undefined ? matched.value : val
-  }
-  return val
+  return choiceValue(field, formState[field.fieldKey], optionsOf(field))
 }
 
 function updateFormFieldValue(field, newVal) {
-  formState[field.fieldKey] = normalizeValueForField(field, newVal)
+  formState[field.fieldKey] = normalizeValueForField(field, newVal, '')
 }
 
-function normalizeValueForField(field, value) {
-  if (value === undefined || value === null || value === '') {
-    return ['multi-select', 'checkbox'].includes(field.componentType) ? [] : ''
-  }
-  if (field.dataType === 'BOOLEAN') {
-    return value === true || value === 1 || value === '1' || value === 'true'
-  }
-  if (field.dataType === 'STRING') {
-    if (Array.isArray(value)) return value.map(v => String(v))
-    return String(value)
-  }
-  if (['INTEGER', 'DECIMAL'].includes(field.dataType)) {
-    if (Array.isArray(value)) return value.map(v => Number(v))
-    const num = Number(value)
-    return isNaN(num) ? value : num
-  }
-  return value
-}
-function componentProps(field) {
-  const result = { ...parseJson(field.componentPropsJson, {}) }
-  delete result.span
-  if (['input', 'select', 'multi-select', 'date-picker', 'datetime-picker'].includes(field.componentType) && result.clearable === undefined) {
-    result.clearable = true
-  }
-  return result
-}
 function fieldSpan(field) {
   if (props.ignoreCustomSpan) {
     return Math.floor(24 / Math.max(1, props.columns))
@@ -255,26 +180,9 @@ function fieldSpan(field) {
   const span = Number(parseJson(field.componentPropsJson, {}).span)
   return span >= 1 && span <= 24 ? span : Math.floor(24 / Math.max(1, props.columns))
 }
-function placeholderOf(field) {
-  if (field.placeholder) return field.placeholder
-  return ['select', 'multi-select', 'date-picker', 'datetime-picker'].includes(field.componentType)
-    ? `请选择${field.fieldLabel}` : `请输入${field.fieldLabel}`
-}
 function changeTrigger(field) {
   return ['input', 'textarea', 'input-number'].includes(field.componentType) ? 'blur' : 'change'
 }
-function defaultValueOf(field) {
-  if (field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== '') {
-    if (field.dataType === 'BOOLEAN') return String(field.defaultValue) === 'true'
-    if (['INTEGER', 'DECIMAL'].includes(field.dataType)) return Number(field.defaultValue)
-    if (field.dataType === 'JSON') return parseJson(field.defaultValue, [])
-    return field.defaultValue
-  }
-  if (field.dataType === 'BOOLEAN') return false
-  if (field.dataType === 'JSON') return []
-  return undefined
-}
-
 function validate(callback) { return formRef.value?.validate(callback) }
 function resetFields() { formRef.value?.resetFields() }
 defineExpose({ validate, resetFields, form: formState })

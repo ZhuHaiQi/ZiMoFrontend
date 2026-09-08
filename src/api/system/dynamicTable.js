@@ -8,10 +8,6 @@ export function getDynamicTable(tableId) {
   return request({ url: `/system/dynamic/table/${tableId}`, method: 'get' })
 }
 
-export function getDynamicTableByCode(tableCode) {
-  return request({ url: `/system/dynamic/table/code/${tableCode}`, method: 'get' })
-}
-
 export function getDynamicFieldCatalog() {
   return request({ url: '/system/dynamic/table/catalog', method: 'get' })
 }
@@ -44,16 +40,8 @@ export function pageDynamicRecords(tableCode, data) {
   return request({ url: `/system/dynamic/record/${tableCode}/page`, method: 'post', data })
 }
 
-export function getDynamicRecord(tableCode, recordId) {
-  return request({ url: `/system/dynamic/record/${tableCode}/${recordId}`, method: 'get' })
-}
-
 export function addDynamicRecord(tableCode, data) {
   return request({ url: `/system/dynamic/record/${tableCode}`, method: 'post', data })
-}
-
-export function batchAddDynamicRecords(tableCode, data) {
-  return request({ url: `/system/dynamic/record/${tableCode}/batch`, method: 'post', data })
 }
 
 export function updateDynamicRecord(tableCode, data) {

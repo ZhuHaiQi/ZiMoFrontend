@@ -29,20 +29,19 @@
       :min-width="field.columnWidth || 140"
       :sortable="field.sortable"
       :align="field.align || 'center'"
-      :edit-render="field.formVisible === false ? null : {}"
+      :edit-render="editableFieldKeys.has(field.fieldKey) ? {} : null"
     >
       <template #header>
         <!-- 自定义表头插槽会替换 vxe 内置的 renderEditHeader，铅笔图标需要手动补回。 -->
-        <span v-if="field.formVisible !== false" class="vxe-cell--edit-icon"><i class="vxe-table-icon-edit" /></span>
+        <span v-if="editableFieldKeys.has(field.fieldKey)" class="vxe-cell--edit-icon"><i class="vxe-table-icon-edit" /></span>
         <span v-if="field.required" class="required-mark">*</span>{{ field.fieldLabel }}
       </template>
       <template #edit="{ row }">
-        <!-- 编辑槽只在 VXE 激活当前单元格时渲染，动态控件本身继续异步拆包。 -->
+        <!-- 编辑槽只在 VXE 激活当前单元格时渲染。 -->
         <dynamic-cell-editor
           :model-value="editing.value"
           :field="field"
-          :dict-options="dictOptions"
-          :cached-api-options="apiOptionMap[field.fieldKey]"
+          :options="optionsOf(field)"
           @update:model-value="editing.value = $event"
           @save="finishEdit(row)"
           @cancel="cancelEdit(row)"
@@ -128,7 +127,8 @@ import { VxeTable, VxeColumn } from 'vxe-table'
 import 'vxe-table/lib/style.css'
 import { Edit, Loading } from '@element-plus/icons-vue'
 import { dictColorTagStyle } from '@/utils/dictColor'
-import { fetchApiOptions } from '@/utils/dynamicSource'
+import { parseJson, isEmpty, booleanValue, isTableFieldEditable, isChoiceField as hasOptions } from '@/utils/dynamicField'
+import { useFieldOptions } from './useFieldOptions'
 import DynamicCellEditor from './DynamicCellEditor.vue'
 
 defineOptions({ inheritAttrs: false })
@@ -150,23 +150,7 @@ const props = defineProps({
 
 const emit = defineEmits(['sort-change', 'cell-change'])
 const tableRef = ref()
-const apiOptionMap = ref({})
-
-async function loadAllApiOptions() {
-  const apiFields = (props.fields || []).filter(f => f.optionSource === 'API')
-  if (!apiFields.length) return
-  const map = { ...apiOptionMap.value }
-  await Promise.all(apiFields.map(async field => {
-    const componentProps = parseJson(field.componentPropsJson, {})
-    const apiConfig = componentProps.apiConfig
-    if (apiConfig?.url) {
-      map[field.fieldKey] = await fetchApiOptions(apiConfig)
-    }
-  }))
-  apiOptionMap.value = map
-}
-
-watch(() => props.fields, () => loadAllApiOptions(), { immediate: true, deep: true })
+const { optionsOf } = useFieldOptions(() => props.fields, () => props.dictOptions)
 
 const editing = reactive({ row: null, field: null, value: undefined, originalValue: undefined, cancelled: false })
 
@@ -195,6 +179,9 @@ const visibleFields = computed(() => props.fields
   .filter(field => field.status !== '1' && field.listVisible !== false)
   .sort((a, b) => (a.sort || 0) - (b.sort || 0)))
 
+const editableFieldKeys = computed(() => new Set(visibleFields.value
+  .filter(isTableFieldEditable).map(field => field.fieldKey)))
+
 /** 将批量字典接口的数据适配为全局 DictTag 组件所需格式，仅在字典数据变化时计算。 */
 const dictTagOptions = computed(() => Object.fromEntries(
   Object.entries(props.dictOptions || {}).map(([dictType, options]) => [
@@ -207,8 +194,10 @@ const dictTagOptions = computed(() => Object.fromEntries(
   ])
 ))
 
+const fieldMap = computed(() => new Map(visibleFields.value.map(field => [field.fieldKey, field])))
+
 function fieldOf(fieldKey) {
-  return visibleFields.value.find(field => field.fieldKey === fieldKey)
+  return fieldMap.value.get(fieldKey)
 }
 
 function handleEditActivated({ row, column }) {
@@ -225,7 +214,7 @@ function handleEditActivated({ row, column }) {
 function handleEditClosed({ row, column }) {
   const field = editing.field || fieldOf(column.field)
   if (!field || editing.row !== row) return resetEditing()
-  if (!editing.cancelled) {
+  if (!editing.cancelled && editableFieldKeys.value.has(field.fieldKey)) {
     emit('cell-change', {
       row,
       field,
@@ -264,7 +253,7 @@ function cellClassName({ row, column }) {
 }
 
 function isEditable(row, field) {
-  if (field.formVisible === false) return false
+  if (!editableFieldKeys.value.has(field.fieldKey)) return false
   return typeof props.editable === 'function' ? props.editable(row, field) : props.editable
 }
 
@@ -283,7 +272,10 @@ function cellTitle(row, field) {
 }
 
 async function startEdit(row, fieldKey) {
-  if (!row?._saving) await tableRef.value?.setEditCell(row, fieldKey)
+  const field = fieldOf(fieldKey)
+  if (row && field && !row._saving && isEditable(row, field)) {
+    await tableRef.value?.setEditCell(row, fieldKey)
+  }
 }
 
 async function finishEdit(row) {
@@ -308,39 +300,9 @@ function resetEditing() {
   editing.cancelled = false
 }
 
-function parseJson(value, fallback) {
-  if (!value) return fallback
-  try { return typeof value === 'string' ? JSON.parse(value) : value } catch { return fallback }
-}
-
 function isShowAsTag(field) {
   const componentProps = parseJson(field.componentPropsJson, {})
   return Boolean(componentProps.showAsTag)
-}
-
-function displayOptionLabels(field, value) {
-  const selected = selectedOptions(field, value)
-  if (!selected.length) {
-    return isEmpty(value) ? '-' : String(value)
-  }
-  return selected.map(option => option.label).join('、')
-}
-
-function optionsOf(field) {
-  if (field.optionSource === 'DICT' && field.dictType) {
-    const list = props.dictOptions[field.dictType] || []
-    return list.map(opt => ({
-      ...opt,
-      label: opt.label ?? opt.dictLabel,
-      value: opt.value ?? opt.dictValue
-    }))
-  }
-  if (field.optionSource === 'API') return apiOptionMap.value[field.fieldKey] || []
-  return parseJson(field.optionsJson, [])
-}
-
-function hasOptions(field) {
-  return ['select', 'multi-select', 'radio', 'checkbox'].includes(field.componentType)
 }
 
 function selectedOptions(field, value) {
@@ -355,14 +317,6 @@ function displayValue(field, value) {
   if (field.dataType === 'DATE') return String(value).slice(0, 10)
   if (field.dataType === 'DATETIME') return String(value).replace('T', ' ').slice(0, 19)
   return value
-}
-
-function isEmpty(value) {
-  return value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length)
-}
-
-function booleanValue(value) {
-  return value === true || value === 1 || value === '1' || value === 'true'
 }
 
 function cloneValue(value) {

@@ -4,8 +4,8 @@ export function listDynamicTables(query) {
   return request({ url: '/system/dynamic/table/list', method: 'get', params: query })
 }
 
-export function getDynamicTable(tableId) {
-  return request({ url: `/system/dynamic/table/${tableId}`, method: 'get' })
+export function getDynamicTable(id) {
+  return request({ url: `/system/dynamic/table/${id}`, method: 'get' })
 }
 
 export function getDynamicFieldCatalog() {
@@ -28,12 +28,12 @@ export function updateDynamicTable(data) {
   return request({ url: '/system/dynamic/table', method: 'put', data })
 }
 
-export function saveDynamicFields(tableId, data) {
-  return request({ url: `/system/dynamic/table/${tableId}/fields`, method: 'put', data })
+export function saveDynamicFields(id, data) {
+  return request({ url: `/system/dynamic/table/${id}/fields`, method: 'put', data })
 }
 
-export function deleteDynamicTable(tableIds) {
-  return request({ url: `/system/dynamic/table/${tableIds}`, method: 'delete' })
+export function deleteDynamicTable(ids) {
+  return request({ url: `/system/dynamic/table/${ids}`, method: 'delete' })
 }
 
 export function pageDynamicRecords(tableCode, data) {
@@ -45,9 +45,9 @@ export function addDynamicRecord(tableCode, data) {
 }
 
 export function updateDynamicRecord(tableCode, data) {
-  return request({ url: `/system/dynamic/record/${tableCode}`, method: 'put', data })
+  return request({ url: `/system/dynamic/record/${tableCode}`, method: 'patch', data })
 }
 
-export function deleteDynamicRecord(tableCode, recordId, version) {
-  return request({ url: `/system/dynamic/record/${tableCode}/${recordId}/${version}`, method: 'delete' })
+export function deleteDynamicRecord(tableCode, id, version) {
+  return request({ url: `/system/dynamic/record/${tableCode}/${id}/${version}`, method: 'delete' })
 }

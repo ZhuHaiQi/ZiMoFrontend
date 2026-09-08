@@ -15,9 +15,9 @@
         <el-scrollbar class="schema-scroll">
           <div
             v-for="item in tableList"
-            :key="item.tableId"
+            :key="item.id || item.tableId"
             class="schema-card"
-            :class="{ active: selectedTable?.tableId === item.tableId, disabled: detailLoading }"
+            :class="{ active: (selectedTable?.id || selectedTable?.tableId) === (item.id || item.tableId), disabled: detailLoading }"
             @click="selectTable(item)"
           >
             <div class="schema-icon"><el-icon><Grid /></el-icon></div>
@@ -316,15 +316,17 @@ function debouncedLoad() {
 
 async function selectTable(item, force = false) {
   if (detailLoading.value) return
-  if (!force && selectedTable.value?.tableId === item.tableId) return
+  const currentId = selectedTable.value?.id || selectedTable.value?.tableId
+  const itemId = item.id || item.tableId
+  if (!force && currentId === itemId) return
   detailLoading.value = true
   try {
     if (!force && dirty.value) {
       try { await proxy.$modal.confirm('当前字段有未保存修改，确定放弃并切换吗？') } catch { return }
     }
-    const response = await getDynamicTable(item.tableId)
+    const response = await getDynamicTable(itemId)
     selectedTable.value = response.data
-    fields.value = (response.data.fields || []).map((field, index) => ({ ...field, _key: field.fieldId || `${Date.now()}-${index}` }))
+    fields.value = (response.data.fields || []).map((field, index) => ({ ...field, _key: field.id || field.fieldId || `${Date.now()}-${index}` }))
     await loadSchemaDictOptions(fields.value)
     dirty.value = false
     previewModel.value = {}
@@ -353,8 +355,10 @@ async function submitTable() {
   try {
     const valid = await tableFormRef.value.validate().catch(() => false)
     if (!valid) return
+    const targetId = tableForm.id || tableForm.tableId
     const payload = {
-      tableId: tableForm.tableId,
+      id: targetId,
+      tableId: targetId,
       tableName: tableForm.tableName,
       tableCode: tableForm.tableCode,
       showRowNumber: tableForm.showRowNumber,
@@ -380,7 +384,7 @@ async function handleDeleteTable() {
   tableDeleting.value = true
   try {
     try { await proxy.$modal.confirm(`确定删除动态表“${selectedTable.value.tableName}”及其全部字段配置吗？`) } catch { return }
-    await deleteDynamicTable(selectedTable.value.tableId)
+    await deleteDynamicTable(selectedTable.value.id || selectedTable.value.tableId)
     proxy.$modal.msgSuccess('删除成功')
     selectedTable.value = null
     fields.value = []
@@ -393,6 +397,7 @@ async function handleDeleteTable() {
 
 function defaultTable() {
   return {
+    id: undefined,
     tableId: undefined,
     tableName: '',
     tableCode: '',
@@ -431,6 +436,7 @@ function cleanFields(items) {
   return items.map(({ _key, ...field }, index) => ({
     ...field,
     align: field.align || 'center',
+    id: undefined,
     fieldId: undefined,
     sort: index + 1
   }))
@@ -446,7 +452,7 @@ async function saveFields() {
   if (fieldsSaving.value) return
   fieldsSaving.value = true
   try {
-    await saveDynamicFields(selectedTable.value.tableId, cleanFields(fields.value))
+    await saveDynamicFields(selectedTable.value.id || selectedTable.value.tableId, cleanFields(fields.value))
     proxy.$modal.msgSuccess('字段配置已保存')
     await selectTable(selectedTable.value, true)
   } finally {

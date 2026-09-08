@@ -5,20 +5,28 @@
     :loading="loading"
     :border="border"
     :stripe="stripe"
-    :max-height="maxHeight"
+    :height="height"
+    :max-height="height ? null : maxHeight"
+    :auto-resize="true"
     :row-config="rowConfig"
+    :cell-config="cellConfig"
     :column-config="columnConfig"
     :sort-config="sortConfig"
     :seq-config="seqConfig"
+    :scroll-x="scrollXConfig"
     :scroll-y="scrollYConfig"
+    :virtual-x-config="scrollXConfig"
+    :virtual-y-config="scrollYConfig"
     :edit-config="editConfig"
     :cell-class-name="cellClassName"
     :cell-style="cellStyle"
     show-overflow="ellipsis"
+    show-header-overflow="ellipsis"
     v-bind="$attrs"
     @sort-change="handleSortChange"
     @edit-activated="handleEditActivated"
     @edit-closed="handleEditClosed"
+    @scroll="handleScroll"
   >
     <vxe-column v-if="showRowNumber" type="seq" title="序号" width="70" fixed="left" align="center" />
     <vxe-column
@@ -26,7 +34,8 @@
       :key="field.fieldKey"
       :field="field.fieldKey"
       :title="field.fieldLabel"
-      :min-width="field.columnWidth || 140"
+      :width="field.columnWidth || 150"
+      :min-width="field.columnWidth || 150"
       :sortable="field.sortable"
       :align="field.align || 'center'"
       :edit-render="editableFieldKeys.has(field.fieldKey) ? {} : null"
@@ -85,19 +94,7 @@
                 </template>
                 <span v-if="!selectedOptions(field, row[field.fieldKey]).length">-</span>
               </template>
-              <template v-else>
-                <!-- 默认以纯文本展示，不包裹 Tag；配置了自定义颜色则显示彩色状态圆点 -->
-                <span class="options-text">
-                  <template v-for="(item, idx) in selectedOptions(field, row[field.fieldKey])" :key="String(item.value)">
-                    <span v-if="idx > 0">、</span>
-                    <span v-if="item.color" class="option-color-text" :style="{ color: item.color }">
-                      <i class="color-dot" :style="{ backgroundColor: item.color }" />{{ item.label }}
-                    </span>
-                    <span v-else>{{ item.label }}</span>
-                  </template>
-                  <span v-if="!selectedOptions(field, row[field.fieldKey]).length">-</span>
-                </span>
-              </template>
+              <span v-else>{{ selectedOptions(field, row[field.fieldKey]).map(item => item.label).join('、') || '-' }}</span>
             </template>
             <template v-else>
               {{ displayValue(field, row[field.fieldKey]) }}
@@ -140,6 +137,7 @@ const props = defineProps({
   dictOptions: { type: Object, default: () => ({}) },
   border: { type: [Boolean, String], default: true },
   stripe: { type: Boolean, default: true },
+  height: { type: [String, Number], default: null },
   maxHeight: { type: [String, Number], default: 620 },
   editable: { type: [Boolean, Function], default: false },
   showRowNumber: { type: Boolean, default: false },
@@ -154,7 +152,8 @@ const { optionsOf } = useFieldOptions(() => props.fields, () => props.dictOption
 
 const editing = reactive({ row: null, field: null, value: undefined, originalValue: undefined, cancelled: false })
 
-const rowConfig = { keyField: '_clientId', isHover: true, height: 48 }
+const rowConfig = { keyField: '_clientId', isHover: true }
+const cellConfig = { height: 48 }
 const columnConfig = { resizable: true }
 const seqConfig = computed(() => ({ startIndex: props.sequenceStart }))
 const sortConfig = computed(() => ({
@@ -163,7 +162,19 @@ const sortConfig = computed(() => ({
     ? { field: props.defaultSortField, order: props.defaultSortOrder === 'asc' ? 'asc' : 'desc' }
     : undefined
 }))
-const scrollYConfig = computed(() => ({ enabled: props.data.length > 50, gt: 50 }))
+// 开启二维虚拟渲染（左右横向虚拟化 + 上下纵向虚拟化），并设置预加载缓冲
+const scrollXConfig = reactive({
+  enabled: true,
+  gt: 0,
+  preSize: 2,
+  oSize: 2
+})
+const scrollYConfig = reactive({
+  enabled: true,
+  gt: 0,
+  preSize: 6,
+  oSize: 6
+})
 const editConfig = computed(() => ({
   trigger: 'click',
   mode: 'cell',
@@ -223,6 +234,11 @@ function handleEditClosed({ row, column }) {
     })
   }
   resetEditing()
+}
+
+function handleScroll({ isX, isY }) {
+  // 虚拟滚动会回收单元格，先通过统一的编辑关闭事件提交当前输入。
+  if ((isX || isY) && editing.row) finishEdit(editing.row)
 }
 
 function handleSortChange({ field, order }) {
@@ -324,7 +340,11 @@ function cloneValue(value) {
   return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value))
 }
 
-defineExpose({ startEdit, finishEdit, cancelEdit, applySort })
+function recalculate() {
+  return tableRef.value?.recalculate()
+}
+
+defineExpose({ startEdit, finishEdit, cancelEdit, applySort, recalculate })
 </script>
 
 <style scoped>
@@ -435,6 +455,4 @@ defineExpose({ startEdit, finishEdit, cancelEdit, applySort })
 .color-value { display: inline-flex; align-items: center; gap: 7px; }
 .color-value i { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--el-border-color); }
 .option-tag { margin-right: 5px; }
-.option-color-text { display: inline-flex; align-items: center; gap: 4px; }
-.color-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
 </style>

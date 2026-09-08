@@ -38,7 +38,7 @@ service.interceptors.request.use(config => {
     config.params = {}
     config.url = url
   }
-  if (!isRepeatSubmit && (config.method === 'post' || config.method === 'put')) {
+  if (!isRepeatSubmit && ['post', 'put', 'patch'].includes(config.method)) {
     const requestObj = {
       url: config.url,
       data: typeof config.data === 'object' ? JSON.stringify(config.data) : config.data,

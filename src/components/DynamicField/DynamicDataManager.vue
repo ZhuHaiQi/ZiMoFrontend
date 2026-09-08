@@ -36,43 +36,49 @@
       </el-button>
     </div>
 
-    <dynamic-table
-      ref="dynamicTableRef"
-      :fields="schema.fields"
-      :data="rows"
-      :dict-options="dictOptions"
-      :loading="loading"
-      :editable="canEditCell"
-      :show-row-number="schema.showRowNumber"
-      :sequence-start="(query.pageNum - 1) * query.pageSize"
-      :default-sort-field="schema.defaultSortField || ''"
-      :default-sort-order="schema.defaultSortOrder || 'desc'"
-      @sort-change="handleSort"
-      @cell-change="handleCellChange"
-    >
-      <template #version="{ row }">{{ row._isDraft ? '-' : row._version }}</template>
-      <template #actions="{ row }">
-          <template v-if="row._isDraft">
-            <el-button link type="primary" icon="Check" :loading="row._submitting" :disabled="row._submitting" @mousedown.prevent.stop @click.stop="saveDraft(row)">
-              保存新增
-            </el-button>
-            <el-button link icon="Close" :disabled="row._submitting" @mousedown.prevent.stop @click.stop="cancelDraft(row)">取消</el-button>
-          </template>
-          <template v-else>
-            <el-button link type="danger" icon="Delete" :loading="row._deleting" :disabled="row._saving || row._deleting" @click.stop="handleDelete(row)" v-hasPermi="['system:dynamic:data:remove']">
-              删除
-            </el-button>
-          </template>
-      </template>
-    </dynamic-table>
-    <pagination
-      v-show="total > 0"
-      :total="total"
-      v-model:page="query.pageNum"
-      v-model:limit="query.pageSize"
-      :disabled="loading"
-      @pagination="loadRecords"
-    />
+    <div class="table-container">
+      <dynamic-table
+        ref="dynamicTableRef"
+        height="100%"
+        :fields="schema.fields"
+        :data="rows"
+        :dict-options="dictOptions"
+        :loading="loading"
+        :editable="canEditCell"
+        :show-row-number="schema.showRowNumber"
+        :sequence-start="(query.pageNum - 1) * query.pageSize"
+        :default-sort-field="schema.defaultSortField || ''"
+        :default-sort-order="schema.defaultSortOrder || 'desc'"
+        @sort-change="handleSort"
+        @cell-change="handleCellChange"
+      >
+        <template #version="{ row }">{{ row._isDraft ? '-' : row._version }}</template>
+        <template #actions="{ row }">
+            <template v-if="row._isDraft">
+              <el-button link type="primary" icon="Check" :loading="row._submitting" :disabled="row._submitting" @mousedown.prevent.stop @click.stop="saveDraft(row)">
+                保存新增
+              </el-button>
+              <el-button link icon="Close" :disabled="row._submitting" @mousedown.prevent.stop @click.stop="cancelDraft(row)">取消</el-button>
+            </template>
+            <template v-else>
+              <el-button link type="danger" icon="Delete" :loading="row._deleting" :disabled="row._saving || row._deleting" @click.stop="handleDelete(row)" v-hasPermi="['system:dynamic:data:remove']">
+                删除
+              </el-button>
+            </template>
+        </template>
+      </dynamic-table>
+    </div>
+    <div class="pagination-container">
+      <pagination
+        v-show="total > 0"
+        :total="total"
+        v-model:page="query.pageNum"
+        v-model:limit="query.pageSize"
+        :page-sizes="[10, 20, 30, 50, 100, 200, 500]"
+        :disabled="loading"
+        @pagination="loadRecords"
+      />
+    </div>
   </div>
 </template>
 
@@ -159,12 +165,14 @@ async function loadRecords() {
 }
 
 function mapRecord(record) {
+  const recId = record.id ?? record.recordId
   return {
     ...(record.data || {}),
-    _recordId: record.recordId,
+    _id: recId,
+    _recordId: recId,
     _version: record.version,
     _status: record.status,
-    _clientId: `record-${record.recordId}`,
+    _clientId: `record-${recId}`,
     _isDraft: false,
     _saving: false,
     _submitting: false,
@@ -309,12 +317,13 @@ async function saveCell({ row, field, value, originalValue }) {
   row[field.fieldKey] = cloneValue(value)
 
   try {
-    // 后端按动态表完整字段执行更新，因此合并当前单元格后提交整行，避免其它列被覆盖为空。
-    const data = buildRowData(row, field.fieldKey, value)
+    // 单元格只提交当前字段，未编辑列由后端保留，避免触发其它列的必填校验。
+    const data = { [field.fieldKey]: value === undefined || value === '' ? null : cloneValue(value) }
+    const targetRecId = row._id ?? row._recordId
     const response = await updateDynamicRecord(props.schema.tableCode, {
-      recordId: row._recordId,
+      id: targetRecId,
+      recordId: targetRecId,
       version: row._version,
-      status: row._status,
       data
     })
     replaceWithServerRecord(row, response.data, field.fieldKey, value)
@@ -363,7 +372,7 @@ async function saveDraft(row) {
     }
 
     const response = await addDynamicRecord(props.schema.tableCode, { data: buildRowData(row) })
-    if (response.data?.recordId) {
+    if (response.data?.id || response.data?.recordId) {
       // 保留 VXE Table 当前行引用，只把草稿内容就地转换为服务端正式记录。
       replaceWithServerRecord(row, response.data)
       total.value += 1
@@ -383,13 +392,10 @@ async function cancelDraft(row) {
   rows.value = rows.value.filter(item => item !== row && item._clientId !== clientId)
 }
 
-function buildRowData(row, overrideKey, overrideValue) {
+function buildRowData(row) {
   const data = {}
   activeFields.value.forEach(field => {
-    let value = field.fieldKey === overrideKey ? overrideValue : row[field.fieldKey]
-    if (field.fieldKey === overrideKey && (value === undefined || value === '')) {
-      value = null
-    }
+    const value = row[field.fieldKey]
     if (value !== undefined) data[field.fieldKey] = cloneValue(value)
   })
   return data
@@ -397,11 +403,13 @@ function buildRowData(row, overrideKey, overrideValue) {
 
 function replaceWithServerRecord(row, record, fallbackKey, fallbackValue) {
   // 优先采用服务端返回的新版本号，保证下一次编辑继续参与乐观锁校验。
-  if (record?.recordId) {
+  const recId = record?.id ?? record?.recordId
+  if (recId) {
     if (record.data && typeof record.data === 'object') {
       Object.assign(row, record.data)
     }
-    row._recordId = record.recordId
+    row._id = recId
+    row._recordId = recId
     row._version = record.version
     row._status = record.status
     row._isDraft = false
@@ -423,7 +431,8 @@ async function handleDelete(row) {
       return
     }
     await dynamicTableRef.value?.cancelEdit(row)
-    await deleteDynamicRecord(props.schema.tableCode, row._recordId, row._version)
+    const targetRecId = row._id ?? row._recordId
+    await deleteDynamicRecord(props.schema.tableCode, targetRecId, row._version)
     proxy.$modal.msgSuccess('删除成功')
     await loadRecords()
   } finally {
@@ -496,21 +505,71 @@ function sameValue(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
-watch(() => props.schema.tableId, () => {
+watch(() => props.schema?.id ?? props.schema?.tableId, () => {
   searchExpanded.value = false
   searchModel.value = {}
   query.pageNum = 1
   resetDefaultSort()
   loadRecords()
 }, { immediate: true })
+
+watch(searchExpanded, () => {
+  nextTick(() => {
+    dynamicTableRef.value?.recalculate()
+  })
+})
 </script>
 
 <style scoped>
-.search-panel { padding: 18px 18px 8px; margin-bottom: 16px; background: var(--el-fill-color-extra-light); border-radius: 8px; }
-.search-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin: -4px 0 8px; }
-.expand-btn { margin-left: 4px; font-size: 13px; display: inline-flex; align-items: center; }
-.data-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.dynamic-data-manager {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.search-panel {
+  flex-shrink: 0;
+  padding: 16px 16px 6px;
+  margin-bottom: 12px;
+  background: var(--el-fill-color-extra-light);
+  border-radius: 8px;
+}
+.search-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 8px;
+}
+.expand-btn {
+  margin-left: 4px;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+}
+.data-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
 .data-toolbar strong { margin-right: 10px; font-size: 16px; }
 .data-toolbar span { color: var(--el-text-color-secondary); font-size: 12px; }
 .data-toolbar small { margin-left: 14px; color: var(--el-text-color-placeholder); font-size: 12px; }
+
+.table-container {
+  flex: 1;
+  min-height: 200px;
+  position: relative;
+  overflow: hidden;
+}
+
+.pagination-container {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+}
 </style>

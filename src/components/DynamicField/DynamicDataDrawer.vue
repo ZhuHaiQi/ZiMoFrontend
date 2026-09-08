@@ -1,8 +1,15 @@
 <template>
-  <el-drawer v-model="open" :title="title" :size="size" append-to-body destroy-on-close>
+  <el-drawer
+    v-model="open"
+    :title="title"
+    :size="size"
+    class="dynamic-data-drawer"
+    append-to-body
+    destroy-on-close
+  >
     <dynamic-data-manager
       v-if="open && schema"
-      :key="schema.tableId"
+      :key="schema.id || schema.tableId"
       :schema="schema"
       :dict-options="dictOptions"
       @ready="loading = false"
@@ -23,7 +30,21 @@ const props = defineProps({
 })
 
 // 每次打开或切换业务表都重新加载；关闭时立即解除入口按钮的加载状态。
-watch([open, () => props.schema?.tableId], ([visible]) => {
+watch([open, () => props.schema?.id ?? props.schema?.tableId], ([visible]) => {
   loading.value = visible && !!props.schema
 }, { immediate: true, flush: 'sync' })
 </script>
+
+<style>
+.dynamic-data-drawer.el-drawer {
+  overflow: hidden;
+}
+.dynamic-data-drawer .el-drawer__body {
+  padding: 16px 20px;
+  height: calc(100% - 55px);
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+</style>

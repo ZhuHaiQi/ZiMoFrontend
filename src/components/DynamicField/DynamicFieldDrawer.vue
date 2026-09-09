@@ -5,6 +5,10 @@
         <el-form-item label="字段名称" prop="fieldLabel"><el-input v-model="fieldForm.fieldLabel" placeholder="例如：客户等级" /></el-form-item>
         <el-form-item label="字段标识" prop="fieldKey"><el-input v-model="fieldForm.fieldKey" placeholder="例如：customer_level" /></el-form-item>
       </div>
+      <el-form-item label="唯一标识" prop="uniqueKey">
+        <el-input v-model="fieldForm.uniqueKey" placeholder="例如：${vin}（选填，格式为 ${...}）" clearable />
+        <div class="form-tip">非必填项，同表内不能重复。格式必须为 ${...}（如 ${vin}），用于全局或跨系统唯一业务映射。</div>
+      </el-form-item>
       <div class="two-columns">
         <el-form-item label="数据类型" prop="dataType">
           <el-select v-model="fieldForm.dataType" style="width: 100%" @change="handleDataTypeChange">
@@ -281,12 +285,39 @@ const fieldRules = {
   fieldLabel: [{ required: true, message: '字段名称不能为空', trigger: 'blur' }],
   fieldKey: [
     { required: true, message: '字段标识不能为空', trigger: 'blur' },
-    { pattern: /^[a-z][a-z0-9_]*$/, message: '请使用小写字母开头的小写字母、数字和下划线', trigger: 'blur' }
+    { pattern: /^[a-z][a-z0-9_]*$/, message: '请使用小写字母开头的小写字母、数字和下划线', trigger: 'blur' },
+    { validator: validateFieldKeyUnique, trigger: ['blur', 'change'] }
+  ],
+  uniqueKey: [
+    { validator: validateUniqueKey, trigger: ['blur', 'change'] }
   ],
   dataType: [{ required: true, message: '请选择数据类型', trigger: 'change' }],
   componentType: [{ required: true, message: '请选择组件类型', trigger: 'change' }],
   componentPropsJson: [{ validator: jsonObjectValidator, trigger: 'blur' }],
   validationJson: [{ validator: jsonObjectValidator, trigger: 'blur' }]
+}
+
+function validateFieldKeyUnique(rule, value, callback) {
+  const key = (value || '').trim().toLowerCase()
+  if (!key) return callback()
+  const duplicate = otherFields.value.some(item => (item.fieldKey || '').trim().toLowerCase() === key)
+  if (duplicate) {
+    return callback(new Error(`字段标识“${value}”已存在，不能重复`))
+  }
+  callback()
+}
+
+function validateUniqueKey(rule, value, callback) {
+  const val = (value || '').trim()
+  if (!val) return callback()
+  if (!/^\$\{[a-zA-Z0-9_]+\}$/.test(val)) {
+    return callback(new Error('唯一标识格式必须为 ${...} 格式，如 ${vin}'))
+  }
+  const duplicate = otherFields.value.some(item => (item.uniqueKey || '').trim() === val)
+  if (duplicate) {
+    return callback(new Error(`唯一标识“${val}”在当前表内已存在，不能重复`))
+  }
+  callback()
 }
 
 const availableComponents = computed(() => props.catalog.find(item => item.value === fieldForm.dataType)?.components || [])
@@ -435,7 +466,7 @@ function handleRequiredColorSelect(val) {
 
 function defaultField() {
   return {
-    fieldLabel: '', fieldKey: '', dataType: 'STRING', componentType: 'input', defaultValue: '',
+    fieldLabel: '', fieldKey: '', uniqueKey: '', dataType: 'STRING', componentType: 'input', defaultValue: '',
     placeholder: '', componentPropsJson: '{}', validationJson: '{}', required: false,
     optionSource: 'STATIC', dictType: '',
     searchable: false, sortable: false, listVisible: true, formVisible: true,
@@ -612,8 +643,22 @@ async function submitField() {
   try {
     const valid = await fieldFormRef.value.validate().catch(() => false)
     if (!valid || !open.value || version !== draftVersion) return
-    const duplicate = props.fields.some(item => item.fieldKey === fieldForm.fieldKey && item !== props.field)
-    if (duplicate) return proxy.$modal.msgError(`字段标识“${fieldForm.fieldKey}”已存在`)
+
+    const normalizedFieldKey = (fieldForm.fieldKey || '').trim().toLowerCase()
+    const duplicateKey = otherFields.value.some(item => (item.fieldKey || '').trim().toLowerCase() === normalizedFieldKey)
+    if (duplicateKey) return proxy.$modal.msgError(`字段标识“${fieldForm.fieldKey}”已存在`)
+
+    const normalizedUniqueKey = (fieldForm.uniqueKey || '').trim()
+    if (normalizedUniqueKey) {
+      if (!/^\$\{[a-zA-Z0-9_]+\}$/.test(normalizedUniqueKey)) {
+        return proxy.$modal.msgError('唯一标识格式必须为 ${...} 格式，如 ${vin}')
+      }
+      const duplicateUniqueKey = otherFields.value.some(item => (item.uniqueKey || '').trim() === normalizedUniqueKey)
+      if (duplicateUniqueKey) {
+        return proxy.$modal.msgError(`唯一标识“${normalizedUniqueKey}”在当前表内已存在，不能重复`)
+      }
+    }
+
     if (isChoiceComponent.value && fieldForm.optionSource === 'STATIC' && fieldOptions.value.some(item => item.label === '' || item.value === '')) {
       return proxy.$modal.msgError('选项名称和值不能为空')
     }
@@ -643,6 +688,8 @@ async function submitField() {
     }
     const field = {
       ...JSON.parse(JSON.stringify(fieldForm)),
+      fieldKey: normalizedFieldKey,
+      uniqueKey: normalizedUniqueKey || undefined,
       align: fieldForm.align || 'center',
       optionsJson: JSON.stringify(isChoiceComponent.value && fieldForm.optionSource === 'STATIC' ? fieldOptions.value : [])
     }

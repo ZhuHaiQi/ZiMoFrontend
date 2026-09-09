@@ -8,17 +8,22 @@
     destroy-on-close
   >
     <dynamic-data-manager
-      v-if="open && schema"
-      :key="schema.id || schema.tableId"
-      :schema="schema"
+      v-if="open && runtimeSchema?.tabs?.length"
+      :key="`${runtimeSchema.id || runtimeSchema.tableId}:${runtimeSchema.runtimeDeptId}`"
+      :schema="runtimeSchema"
       :dict-options="dictOptions"
       @ready="loading = false"
+    />
+    <el-empty
+      v-else-if="open && !schemaLoading"
+      description="当前部门未配置可见 Tab"
     />
   </el-drawer>
 </template>
 
 <script setup name="DynamicDataDrawer">
 import DynamicDataManager from './DynamicDataManager.vue'
+import { getDynamicRuntimeSchema } from '@/api/system/dynamicTable'
 
 const open = defineModel({ type: Boolean, default: false })
 const loading = defineModel('loading', { type: Boolean, default: false })
@@ -28,10 +33,26 @@ const props = defineProps({
   title: { type: String, default: '动态数据管理' },
   size: { type: [String, Number], default: '88%' }
 })
+const runtimeSchema = ref(null)
+const schemaLoading = ref(false)
+let loadSequence = 0
 
-// 每次打开或切换业务表都重新加载；关闭时立即解除入口按钮的加载状态。
-watch([open, () => props.schema?.id ?? props.schema?.tableId], ([visible]) => {
-  loading.value = visible && !!props.schema
+// 每次打开都从服务端读取当前部门可见的 Tab 和字段，避免使用设计器中的完整 Schema。
+watch([open, () => props.schema?.id ?? props.schema?.tableId], async ([visible, schemaId]) => {
+  const sequence = ++loadSequence
+  runtimeSchema.value = null
+  loading.value = visible && !!schemaId
+  if (!visible || !schemaId) return
+  schemaLoading.value = true
+  try {
+    const response = await getDynamicRuntimeSchema(schemaId)
+    if (sequence === loadSequence) runtimeSchema.value = response.data
+  } finally {
+    if (sequence === loadSequence) {
+      schemaLoading.value = false
+      if (!runtimeSchema.value?.tabs?.length) loading.value = false
+    }
+  }
 }, { immediate: true, flush: 'sync' })
 </script>
 

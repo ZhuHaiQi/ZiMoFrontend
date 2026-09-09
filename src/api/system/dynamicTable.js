@@ -8,6 +8,10 @@ export function getDynamicTable(id) {
   return request({ url: `/system/dynamic/table/${id}`, method: 'get' })
 }
 
+export function getDynamicRuntimeSchema(id) {
+  return request({ url: `/system/dynamic/table/${id}/runtime`, method: 'get' })
+}
+
 export function getDynamicFieldCatalog() {
   return request({ url: '/system/dynamic/table/catalog', method: 'get' })
 }
@@ -18,6 +22,10 @@ export function getDynamicDictOptions(types) {
     method: 'get',
     params: { types: Array.isArray(types) ? types.join(',') : types }
   })
+}
+
+export function getDynamicDepartmentOptions() {
+  return request({ url: '/system/dynamic/table/department-options', method: 'get' })
 }
 
 export function addDynamicTable(data) {
@@ -32,8 +40,16 @@ export function saveDynamicFields(id, data) {
   return request({ url: `/system/dynamic/table/${id}/fields`, method: 'put', data })
 }
 
+export function saveDynamicTabs(id, data) {
+  return request({ url: `/system/dynamic/table/${id}/tabs`, method: 'put', data })
+}
+
 export function deleteDynamicTable(ids) {
   return request({ url: `/system/dynamic/table/${ids}`, method: 'delete' })
+}
+
+export function checkTableCodeUnique(params) {
+  return request({ url: '/system/dynamic/table/checkTableCodeUnique', method: 'get', params })
 }
 
 export function pageDynamicRecords(tableCode, data) {
@@ -48,6 +64,6 @@ export function updateDynamicRecord(tableCode, data) {
   return request({ url: `/system/dynamic/record/${tableCode}`, method: 'patch', data })
 }
 
-export function deleteDynamicRecord(tableCode, id, version) {
-  return request({ url: `/system/dynamic/record/${tableCode}/${id}/${version}`, method: 'delete' })
+export function deleteDynamicRecord(tableCode, id, version, tabId) {
+  return request({ url: `/system/dynamic/record/${tableCode}/${id}/${version}`, method: 'delete', params: { tabId } })
 }

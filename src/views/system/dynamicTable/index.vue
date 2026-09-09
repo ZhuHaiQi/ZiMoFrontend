@@ -44,6 +44,7 @@
               <div class="schema-meta">
                 <span>编码 <code>{{ selectedTable.tableCode }}</code></span>
                 <span>{{ fields.length }} 个字段</span>
+                <span>{{ selectedTable.tabs?.length || 0 }} 个 Tab</span>
                 <span v-if="selectedTable.showRowNumber">显示序号列</span>
                 <span v-if="selectedTable.defaultSortField">
                   默认按 {{ fieldLabel(selectedTable.defaultSortField) }}{{ selectedTable.defaultSortOrder === 'asc' ? '升序' : '降序' }}
@@ -54,6 +55,7 @@
             <div class="workspace-actions">
               <el-button icon="DataAnalysis" :loading="dataOpening" :disabled="dataOpening" @click="dataOpen = true" v-hasPermi="['system:dynamic:data:list']">数据管理</el-button>
               <el-button icon="View" @click="previewOpen = true">预览</el-button>
+              <el-button icon="Collection" @click="openTabConfig" v-hasPermi="['system:dynamic:edit']">部门 Tab 配置</el-button>
               <el-dropdown trigger="click" :disabled="tableDeleting">
                 <el-button icon="MoreFilled" circle :loading="tableDeleting" :disabled="tableDeleting" />
                 <template #dropdown>
@@ -89,7 +91,12 @@
                     <div class="field-type-icon" :class="`type-${element.dataType.toLowerCase()}`">{{ typeShort(element.dataType) }}</div>
                     <div>
                       <div class="field-label"><span v-if="element.required" class="required">*</span>{{ element.fieldLabel }}</div>
-                      <code>{{ element.fieldKey }}</code>
+                      <div style="display: flex; align-items: center; gap: 6px; margin-top: 2px">
+                        <code>{{ element.fieldKey }}</code>
+                        <el-tag v-if="element.uniqueKey" size="small" type="warning" effect="light" style="font-family: monospace">
+                          {{ element.uniqueKey }}
+                        </el-tag>
+                      </div>
                     </div>
                   </div>
                   <div><el-tag effect="plain">{{ typeLabel(element.dataType) }}</el-tag></div>
@@ -155,25 +162,6 @@
           <el-switch v-model="tableForm.showRowNumber" />
           <span class="inline-tip">开启后在列表左侧显示跨页连续序号，不作为业务数据保存。</span>
         </el-form-item>
-        <div class="two-columns">
-          <el-form-item label="默认排序">
-            <el-select
-              v-model="tableForm.defaultSortField"
-              clearable
-              :disabled="tableDialogMode === 'add' || !defaultSortFields.length"
-              :placeholder="tableDialogMode === 'add' ? '创建字段后再配置' : defaultSortFields.length ? '请选择字段' : '请先开启字段排序'"
-              style="width: 100%"
-            >
-              <el-option v-for="field in defaultSortFields" :key="field.fieldKey" :label="field.fieldLabel" :value="field.fieldKey" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="排序方向">
-            <el-select v-model="tableForm.defaultSortOrder" :disabled="!tableForm.defaultSortField" style="width: 100%">
-              <el-option label="升序" value="asc" />
-              <el-option label="降序" value="desc" />
-            </el-select>
-          </el-form-item>
-        </div>
         <el-form-item label="说明"><el-input v-model="tableForm.remark" type="textarea" :rows="3" placeholder="说明这个字段集合会用在哪些业务场景" /></el-form-item>
       </el-form>
       <template #footer>
@@ -188,6 +176,16 @@
       :fields="fields"
       :catalog="catalog"
       @apply="applyField"
+    />
+
+    <dynamic-tab-drawer
+      v-model="tabDrawerOpen"
+      :tabs="selectedTable?.tabs || []"
+      :department-tabs="selectedTable?.departmentTabs || []"
+      :fields="fields"
+      :departments="departmentOptions"
+      :saving="tabsSaving"
+      @save="saveTabs"
     />
 
     <el-drawer v-model="previewOpen" title="实时预览" size="76%" append-to-body>
@@ -227,10 +225,12 @@ import draggable from 'vuedraggable'
 import DynamicTable from '@/components/DynamicField/DynamicTable.vue'
 import DynamicForm from '@/components/DynamicField/DynamicForm.vue'
 import DynamicFieldDrawer from '@/components/DynamicField/DynamicFieldDrawer.vue'
+import DynamicTabDrawer from '@/components/DynamicField/DynamicTabDrawer.vue'
 import DynamicDataDrawer from '@/components/DynamicField/DynamicDataDrawer.vue'
 import {
   listDynamicTables, getDynamicTable, getDynamicFieldCatalog, addDynamicTable,
-  updateDynamicTable, saveDynamicFields, deleteDynamicTable, getDynamicDictOptions
+  updateDynamicTable, saveDynamicFields, deleteDynamicTable, getDynamicDictOptions,
+  getDynamicDepartmentOptions, saveDynamicTabs, checkTableCodeUnique
 } from '@/api/system/dynamicTable'
 
 import { parseJson } from '@/utils/dynamicField'
@@ -252,12 +252,41 @@ const tableFormRef = ref()
 const tableSubmitting = ref(false)
 const tableDeleting = ref(false)
 const fieldsSaving = ref(false)
+const tabDrawerOpen = ref(false)
+const tabsSaving = ref(false)
+const departmentOptions = ref([])
 const tableForm = reactive(defaultTable())
+
+const validateTableCode = async (rule, value, callback) => {
+  if (!value) return callback()
+  const code = value.trim().toLowerCase()
+  const currentId = tableForm.id || tableForm.tableId
+  // 1. 本地已有表格列表排重
+  const isDuplicateInList = tableList.value.some(item => {
+    const itemId = item.id || item.tableId
+    return item.tableCode?.toLowerCase() === code && itemId !== currentId
+  })
+  if (isDuplicateInList) {
+    return callback(new Error(`动态表唯一编码“${code}”已存在`))
+  }
+  // 2. 服务端实时唯一性校验
+  try {
+    const res = await checkTableCodeUnique({ tableCode: code, id: currentId })
+    if (res.data === false) {
+      return callback(new Error(`动态表唯一编码“${code}”已存在`))
+    }
+    callback()
+  } catch (err) {
+    callback()
+  }
+}
+
 const tableRules = {
   tableName: [{ required: true, message: '名称不能为空', trigger: 'blur' }],
   tableCode: [
     { required: true, message: '编码不能为空', trigger: 'blur' },
-    { pattern: /^[a-z][a-z0-9_]*$/, message: '请使用小写字母开头的小写字母、数字和下划线', trigger: 'blur' }
+    { pattern: /^[a-z][a-z0-9_]*$/, message: '请使用小写字母开头的小写字母、数字和下划线', trigger: 'blur' },
+    { validator: validateTableCode, trigger: 'blur' }
   ]
 }
 
@@ -383,7 +412,7 @@ async function handleDeleteTable() {
   if (tableDeleting.value) return
   tableDeleting.value = true
   try {
-    try { await proxy.$modal.confirm(`确定删除动态表“${selectedTable.value.tableName}”及其全部字段配置吗？`) } catch { return }
+    try { await proxy.$modal.confirm(`确定删除动态表“${selectedTable.value.tableName}”及其全部字段、Tab 配置吗？`) } catch { return }
     await deleteDynamicTable(selectedTable.value.id || selectedTable.value.tableId)
     proxy.$modal.msgSuccess('删除成功')
     selectedTable.value = null
@@ -457,6 +486,28 @@ async function saveFields() {
     await selectTable(selectedTable.value, true)
   } finally {
     fieldsSaving.value = false
+  }
+}
+
+async function openTabConfig() {
+  if (dirty.value) return proxy.$modal.msgWarning('请先保存字段配置，再配置 Tab')
+  if (!departmentOptions.value.length) {
+    const response = await getDynamicDepartmentOptions()
+    departmentOptions.value = response.data || []
+  }
+  tabDrawerOpen.value = true
+}
+
+async function saveTabs(departments) {
+  if (tabsSaving.value) return
+  tabsSaving.value = true
+  try {
+    await saveDynamicTabs(selectedTable.value.id || selectedTable.value.tableId, departments)
+    proxy.$modal.msgSuccess('部门 Tab 和字段配置已保存')
+    tabDrawerOpen.value = false
+    await selectTable(selectedTable.value, true)
+  } finally {
+    tabsSaving.value = false
   }
 }
 

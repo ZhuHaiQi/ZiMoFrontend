@@ -1,5 +1,9 @@
 <template>
   <div class="dynamic-data-manager">
+    <el-tabs v-model="activeTabCode" class="data-tabs" :before-leave="beforeTabLeave" @tab-change="handleTabChange">
+      <el-tab-pane v-for="tab in visibleTabs" :key="tab.id ?? tab.tabId" :label="tab.tabName" :name="tab.tabCode" :disabled="loading || switchingTab" />
+    </el-tabs>
+
     <div v-if="searchFields.length" class="search-panel">
       <dynamic-form
         v-model="searchModel"
@@ -28,7 +32,7 @@
 
     <div class="data-toolbar">
       <div>
-        <strong>{{ schema.tableName }}</strong><span>动态数据</span>
+        <strong>{{ schema.tableName }} / {{ activeTab?.tabName }}</strong><span>本部门数据</span>
         <small>点击单元格按需加载控件，失去焦点自动保存，Esc 取消</small>
       </div>
       <el-button type="primary" icon="Plus" :disabled="loading" @click="handleAdd" v-hasPermi="['system:dynamic:data:add']">
@@ -40,15 +44,15 @@
       <dynamic-table
         ref="dynamicTableRef"
         height="100%"
-        :fields="schema.fields"
+        :fields="activeFields"
         :data="rows"
         :dict-options="dictOptions"
         :loading="loading"
         :editable="canEditCell"
         :show-row-number="schema.showRowNumber"
         :sequence-start="(query.pageNum - 1) * query.pageSize"
-        :default-sort-field="schema.defaultSortField || ''"
-        :default-sort-order="schema.defaultSortOrder || 'desc'"
+        :default-sort-field="query.sortField"
+        :default-sort-order="query.sortOrder"
         @sort-change="handleSort"
         @cell-change="handleCellChange"
       >
@@ -110,10 +114,29 @@ const query = reactive({ pageNum: 1, pageSize: 20, sortField: '', sortOrder: 'de
 
 const SEARCH_FOLD_LIMIT = 8
 const searchExpanded = ref(false)
+const activeTabCode = ref('')
+const switchingTab = ref(false)
+const tabStates = new Map()
+let loadSequence = 0
+const schemaScope = computed(() => `${props.schema.id ?? props.schema.tableId}:${props.schema.runtimeDeptId ?? ''}`)
+const activeTabId = computed(() => activeTab.value?.id ?? activeTab.value?.tabId)
+const scopeKey = computed(() => `${schemaScope.value}:${activeTabId.value ?? ''}`)
 
-const activeFields = computed(() => (props.schema.fields || [])
+onBeforeUnmount(() => { ++loadSequence })
+
+const schemaFields = computed(() => (props.schema.fields || [])
   .filter(field => field.status !== '1')
   .sort((a, b) => (a.sort || 0) - (b.sort || 0)))
+
+const visibleTabs = computed(() => (props.schema.tabs || [])
+  .filter(tab => tab.status !== '1')
+  .sort((a, b) => (a.sort || 0) - (b.sort || 0)))
+
+const activeTab = computed(() => visibleTabs.value.find(tab => tab.tabCode === activeTabCode.value) || visibleTabs.value[0])
+const activeFields = computed(() => {
+  const fieldMap = new Map(schemaFields.value.map(field => [field.fieldKey, field]))
+  return (activeTab.value?.fieldKeys || []).map(fieldKey => fieldMap.get(fieldKey)).filter(Boolean)
+})
 
 const editableFields = computed(() => activeFields.value.filter(isTableFieldEditable))
 const editableFieldKeys = computed(() => new Set(editableFields.value.map(field => field.fieldKey)))
@@ -148,14 +171,20 @@ function buildFilters() {
 }
 
 async function loadRecords() {
-  if (loading.value) return
+  if (loading.value || !activeTabId.value) return
+  const sequence = ++loadSequence
+  const requestedScope = scopeKey.value
+  const tabId = activeTabId.value
   loading.value = true
   try {
     await flushEditing()
-    const response = await pageDynamicRecords(props.schema.tableCode, { ...query, filters: buildFilters() })
-    rows.value = (response.rows || []).map(mapRecord)
+    const response = await pageDynamicRecords(props.schema.tableCode, { ...query, tabId, filters: buildFilters() })
+    if (sequence !== loadSequence || requestedScope !== scopeKey.value) return
+    const drafts = rows.value.filter(row => row._isDraft)
+    rows.value = [...drafts, ...(response.rows || []).map(mapRecord)]
     total.value = response.total || 0
   } finally {
+    if (sequence !== loadSequence) return
     loading.value = false
     if (initialLoadPending.value) {
       initialLoadPending.value = false
@@ -168,6 +197,8 @@ function mapRecord(record) {
   const recId = record.id ?? record.recordId
   return {
     ...(record.data || {}),
+    _tabId: record.tabId,
+    _ownerDeptId: record.ownerDeptId,
     _id: recId,
     _recordId: recId,
     _version: record.version,
@@ -222,6 +253,34 @@ function resetDefaultSort() {
   query.sortOrder = defaultField && props.schema.defaultSortOrder === 'asc' ? 'asc' : 'desc'
 }
 
+async function handleTabChange() {
+  const state = tabStates.get(scopeKey.value)
+  rows.value = state?.drafts || []
+  total.value = 0
+  searchExpanded.value = state?.searchExpanded || false
+  searchModel.value = state?.searchModel || {}
+  Object.assign(query, state?.query || { pageNum: 1, pageSize: 20, sortField: '', sortOrder: 'desc' })
+  if (!state) resetDefaultSort()
+  await loadRecords()
+}
+
+async function beforeTabLeave() {
+  if (loading.value || switchingTab.value || rows.value.some(row => row._submitting || row._deleting)) return false
+  switchingTab.value = true
+  try {
+    if (await flushEditing() === false) return false
+    tabStates.set(scopeKey.value, {
+      drafts: rows.value.filter(row => row._isDraft),
+      searchModel: cloneValue(searchModel.value),
+      searchExpanded: searchExpanded.value,
+      query: { ...query }
+    })
+    return true
+  } finally {
+    switchingTab.value = false
+  }
+}
+
 function canEditCell(row, field) {
   if (!editableFieldKeys.value.has(field.fieldKey) || row._submitting || row._deleting) return false
   return row._isDraft
@@ -230,12 +289,14 @@ function canEditCell(row, field) {
 }
 
 function handleAdd() {
+  if (!activeTabId.value || loading.value || switchingTab.value) return
   const existingDraft = rows.value.find(row => row._isDraft)
   if (existingDraft) {
     focusFirstCell(existingDraft)
     return
   }
   const row = {
+    _tabId: activeTabId.value,
     _clientId: `draft-${Date.now()}-${++draftSequence.value}`,
     _isDraft: true,
     _saving: false,
@@ -321,6 +382,7 @@ async function saveCell({ row, field, value, originalValue }) {
     const data = { [field.fieldKey]: value === undefined || value === '' ? null : cloneValue(value) }
     const targetRecId = row._id ?? row._recordId
     const response = await updateDynamicRecord(props.schema.tableCode, {
+      tabId: row._tabId,
       id: targetRecId,
       recordId: targetRecId,
       version: row._version,
@@ -337,7 +399,8 @@ async function saveCell({ row, field, value, originalValue }) {
 
 async function flushEditing() {
   await dynamicTableRef.value?.finishEdit()
-  if (pendingSaves.size) await Promise.all([...pendingSaves])
+  const results = await Promise.all([...pendingSaves])
+  return results.every(result => result !== false)
 }
 
 async function saveDraft(row) {
@@ -355,7 +418,7 @@ async function saveDraft(row) {
         if (mode === 'alert') {
           row._submitting = false
           await nextTick()
-          await dynamicTableRef.value?.startEdit(row, field.fieldKey)
+          await focusField(row, field.fieldKey)
           return proxy.$modal.msgError(`【${field.fieldLabel}】为必填项，请填写`)
         }
       }
@@ -367,11 +430,11 @@ async function saveDraft(row) {
     if (uniqueConflict) {
       row._submitting = false
       await nextTick()
-      await dynamicTableRef.value?.startEdit(row, uniqueConflict.field.fieldKey)
+      await focusField(row, uniqueConflict.field.fieldKey)
       return proxy.$modal.msgError(uniqueConflict.error)
     }
 
-    const response = await addDynamicRecord(props.schema.tableCode, { data: buildRowData(row) })
+    const response = await addDynamicRecord(props.schema.tableCode, { tabId: row._tabId, requestId: row._clientId, data: buildRowData(row) })
     if (response.data?.id || response.data?.recordId) {
       // 保留 VXE Table 当前行引用，只把草稿内容就地转换为服务端正式记录。
       replaceWithServerRecord(row, response.data)
@@ -408,6 +471,8 @@ function replaceWithServerRecord(row, record, fallbackKey, fallbackValue) {
     if (record.data && typeof record.data === 'object') {
       Object.assign(row, record.data)
     }
+    row._tabId = record.tabId
+    row._ownerDeptId = record.ownerDeptId
     row._id = recId
     row._recordId = recId
     row._version = record.version
@@ -432,7 +497,7 @@ async function handleDelete(row) {
     }
     await dynamicTableRef.value?.cancelEdit(row)
     const targetRecId = row._id ?? row._recordId
-    await deleteDynamicRecord(props.schema.tableCode, targetRecId, row._version)
+    await deleteDynamicRecord(props.schema.tableCode, targetRecId, row._version, row._tabId)
     proxy.$modal.msgSuccess('删除成功')
     await loadRecords()
   } finally {
@@ -498,20 +563,31 @@ function validateAllRowUnique(row) {
 
 function cloneValue(value) {
   if (value === undefined || value === null || typeof value !== 'object') return value
-  return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value))
+  return JSON.parse(JSON.stringify(value))
 }
 
 function sameValue(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
-watch(() => props.schema?.id ?? props.schema?.tableId, () => {
+watch(schemaScope, () => {
+  ++loadSequence
+  loading.value = false
+  rows.value = []
+  total.value = 0
+  tabStates.clear()
+  activeTabCode.value = visibleTabs.value[0]?.tabCode || ''
   searchExpanded.value = false
   searchModel.value = {}
   query.pageNum = 1
   resetDefaultSort()
   loadRecords()
 }, { immediate: true })
+
+async function focusField(row, fieldKey) {
+  if (row._tabId !== activeTabId.value) return
+  await dynamicTableRef.value?.startEdit(row, fieldKey)
+}
 
 watch(searchExpanded, () => {
   nextTick(() => {
@@ -530,6 +606,8 @@ watch(searchExpanded, () => {
   box-sizing: border-box;
   overflow: hidden;
 }
+.data-tabs { flex-shrink: 0; margin-bottom: 10px; }
+.data-tabs :deep(.el-tabs__header) { margin-bottom: 4px; }
 .search-panel {
   flex-shrink: 0;
   padding: 16px 16px 6px;

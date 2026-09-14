@@ -8,8 +8,27 @@ export function getDynamicTable(id) {
   return request({ url: `/system/dynamic/table/${id}`, method: 'get' })
 }
 
-export function getDynamicRuntimeSchema(id) {
-  return request({ url: `/system/dynamic/table/${id}/runtime`, method: 'get' })
+export function getDynamicRuntimeSchemaByCode(tableCode, deptId) {
+  return request({
+    url: `/system/dynamic/table/runtime/${tableCode}`,
+    method: 'get',
+    params: deptId != null ? { deptId } : undefined
+  })
+}
+
+export function getDynamicRuntimeSchemaById(id, deptId) {
+  return request({
+    url: `/system/dynamic/table/${id}/runtime`,
+    method: 'get',
+    params: deptId != null ? { deptId } : undefined
+  })
+}
+
+export function getDynamicRuntimeSchema(identifier, deptId) {
+  if (typeof identifier === 'number' || /^\d+$/.test(String(identifier || ''))) {
+    return getDynamicRuntimeSchemaById(identifier, deptId)
+  }
+  return getDynamicRuntimeSchemaByCode(identifier, deptId)
 }
 
 export function getDynamicFieldCatalog() {
@@ -64,6 +83,10 @@ export function updateDynamicRecord(tableCode, data) {
   return request({ url: `/system/dynamic/record/${tableCode}`, method: 'patch', data })
 }
 
-export function deleteDynamicRecord(tableCode, id, version, tabId) {
-  return request({ url: `/system/dynamic/record/${tableCode}/${id}/${version}`, method: 'delete', params: { tabId } })
+export function deleteDynamicRecord(tableCode, id, version, tabId, deptId) {
+  return request({
+    url: `/system/dynamic/record/${tableCode}/${id}/${version}`,
+    method: 'delete',
+    params: { tabId, ...(deptId != null ? { deptId } : {}) }
+  })
 }

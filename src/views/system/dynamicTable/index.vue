@@ -569,9 +569,23 @@ async function applyField(field) {
 .schema-count { padding: 18px 4px 10px; color: var(--el-text-color-secondary); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .schema-count span { float: right; }
 .schema-scroll { flex: 1; }
-.schema-card { display: flex; align-items: center; gap: 10px; padding: 11px 10px; margin-bottom: 6px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; transition: all .18s; }
+.schema-card { display: flex; align-items: center; gap: 10px; padding: 11px 12px; margin-bottom: 6px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; transition: all .18s; position: relative; }
 .schema-card:hover { background: var(--el-bg-color); border-color: var(--el-border-color-light); }
-.schema-card.active { background: var(--el-color-primary-light-9); border-color: var(--el-color-primary-light-5); }
+.schema-card.active {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.12);
+}
+.schema-card.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  background: var(--el-color-primary);
+  border-radius: 0 3px 3px 0;
+}
 .schema-card.disabled { pointer-events: none; opacity: .7; }
 .schema-icon { width: 34px; height: 34px; display: grid; place-items: center; flex: none; color: var(--el-color-primary); background: var(--el-color-primary-light-8); border-radius: 8px; }
 .schema-info { min-width: 0; flex: 1; }

@@ -177,41 +177,43 @@
             />
           </el-form-item>
         </div>
-        <div class="dept-status-sort-row">
-          <el-form-item label="本部门状态" class="status-item">
+        <div class="dept-settings-card">
+          <div class="dept-status-col">
+            <span class="setting-label">本部门启用</span>
             <el-switch v-model="currentTab.enabled" inline-prompt active-text="启用" inactive-text="停用" />
-          </el-form-item>
-          <el-form-item label="默认排序" class="sort-field-item" label-width="70px">
-            <el-select
-              v-model="currentTab.defaultSortField"
-              clearable
-              :placeholder="currentTabSortableFields.length ? '默认按记录ID倒序' : '当前未勾选可排序字段'"
-              :disabled="!currentTabSortableFields.length"
-              style="width: 100%"
-            >
-              <el-option
-                v-for="field in currentTabSortableFields"
-                :key="field.fieldKey"
-                :label="field.fieldLabel"
-                :value="field.fieldKey"
+          </div>
+          <div class="dept-sort-col">
+            <span class="setting-label">默认排序规则</span>
+            <div class="sort-combine-box">
+              <el-select
+                v-model="currentTab.defaultSortField"
+                clearable
+                :placeholder="currentTabSortableFields.length ? '默认按记录ID倒序' : '当前未勾选可排序字段'"
+                :disabled="!currentTabSortableFields.length"
+                class="sort-field-select"
               >
-                <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-                  <span>{{ field.fieldLabel }}</span>
-                  <code style="margin-left: 8px;">{{ field.fieldKey }}</code>
-                </div>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="排序方向" class="sort-order-item" label-width="70px">
-            <el-select
-              v-model="currentTab.defaultSortOrder"
-              :disabled="!currentTab.defaultSortField"
-              style="width: 100%"
-            >
-              <el-option label="降序" value="desc" />
-              <el-option label="升序" value="asc" />
-            </el-select>
-          </el-form-item>
+                <el-option
+                  v-for="field in currentTabSortableFields"
+                  :key="field.fieldKey"
+                  :label="field.fieldLabel"
+                  :value="field.fieldKey"
+                >
+                  <div class="sort-option-item">
+                    <span>{{ field.fieldLabel }}</span>
+                    <code>{{ field.fieldKey }}</code>
+                  </div>
+                </el-option>
+              </el-select>
+              <el-radio-group
+                v-model="currentTab.defaultSortOrder"
+                :disabled="!currentTab.defaultSortField"
+                class="sort-direction-group"
+              >
+                <el-radio-button value="desc">降序</el-radio-button>
+                <el-radio-button value="asc">升序</el-radio-button>
+              </el-radio-group>
+            </div>
+          </div>
         </div>
 
         <section class="field-section">
@@ -224,8 +226,20 @@
             <span>提示：当前未勾选字段，保存后该部门在该 Tab 下将展示空内容。</span>
           </div>
           <el-checkbox-group v-model="currentTab.fieldKeys" class="field-options">
-            <el-checkbox v-for="field in configurableFields" :key="field.fieldKey" :value="field.fieldKey" border>
-              {{ field.fieldLabel }}{{ field.status === '1' ? '（已停用）' : '' }} <code>{{ field.fieldKey }}</code>
+            <el-checkbox
+              v-for="field in configurableFields"
+              :key="field.fieldKey"
+              :value="field.fieldKey"
+              class="field-checkbox-item"
+              border
+            >
+              <div class="field-checkbox-inner">
+                <span class="field-checkbox-text" :title="field.fieldLabel">
+                  {{ field.fieldLabel }}
+                  <small v-if="field.status === '1'" class="text-disabled">（已停用）</small>
+                </span>
+                <code class="field-checkbox-key">{{ field.fieldKey }}</code>
+              </div>
             </el-checkbox>
           </el-checkbox-group>
           <el-empty v-if="!configurableFields.length" description="请先保存字段配置" :image-size="60" />
@@ -791,12 +805,48 @@ function submit() {
 }
 .field-options {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
 }
-.field-options .el-checkbox {
+.field-checkbox-item {
   width: 100%;
-  margin: 0;
+  margin: 0 !important;
+  height: auto !important;
+  padding: 8px 12px !important;
+  border-radius: 8px !important;
+  background: var(--el-bg-color);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.field-checkbox-item:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+}
+.field-checkbox-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+  min-width: 0;
+}
+.field-checkbox-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+}
+.field-checkbox-key {
+  font-size: 11px;
+  color: var(--el-text-color-placeholder);
+  flex: none;
+}
+.text-disabled {
+  color: var(--el-color-danger);
+  font-size: 11px;
 }
 .referencing-tags {
   display: flex;
@@ -828,20 +878,58 @@ code {
   display: grid;
   place-items: center;
 }
-.dept-status-sort-row {
-  display: grid;
-  grid-template-columns: 140px 1.2fr 1fr;
-  gap: 14px;
+.dept-settings-card {
+  display: flex;
   align-items: center;
+  gap: 20px;
+  padding: 14px 16px;
   margin-bottom: 18px;
+  background: var(--el-fill-color-extra-light);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  flex-wrap: wrap;
 }
-.dept-status-sort-row .status-item,
-.dept-status-sort-row .sort-field-item,
-.dept-status-sort-row .sort-order-item {
-  margin-bottom: 0;
+.dept-status-col {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+.dept-sort-col {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 280px;
+}
+.setting-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--el-text-color-regular);
+  white-space: nowrap;
+  flex: none;
+}
+.sort-combine-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.sort-field-select {
+  flex: 1;
+  min-width: 0;
+}
+.sort-direction-group {
+  flex: none;
+}
+.sort-option-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   width: 100%;
 }
-.dept-status-sort-row :deep(.el-form-item__content) {
-  min-width: 0;
+.sort-option-item code {
+  margin-left: 8px;
 }
 </style>

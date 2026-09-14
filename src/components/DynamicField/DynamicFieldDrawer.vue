@@ -1,13 +1,19 @@
 <template>
-  <el-drawer v-model="open" :title="field ? '编辑字段' : '添加字段'" :size="size" append-to-body destroy-on-close>
-    <el-form ref="fieldFormRef" :model="fieldForm" :rules="fieldRules" label-position="top">
+  <el-drawer v-model="open" :title="field ? '编辑字段' : '添加字段'" :size="size" append-to-body destroy-on-close class="dynamic-field-drawer">
+    <el-form ref="fieldFormRef" :model="fieldForm" :rules="fieldRules" label-position="top" class="field-form-container">
       <div class="two-columns">
-        <el-form-item label="字段名称" prop="fieldLabel"><el-input v-model="fieldForm.fieldLabel" placeholder="例如：客户等级" /></el-form-item>
-        <el-form-item label="字段标识" prop="fieldKey"><el-input v-model="fieldForm.fieldKey" placeholder="例如：customer_level" /></el-form-item>
+        <el-form-item label="字段名称" prop="fieldLabel"><el-input v-model="fieldForm.fieldLabel" placeholder="例如：客户等级" clearable /></el-form-item>
+        <el-form-item label="字段标识" prop="fieldKey"><el-input v-model="fieldForm.fieldKey" placeholder="例如：customer_level" clearable /></el-form-item>
       </div>
-      <el-form-item label="唯一标识" prop="uniqueKey">
-        <el-input v-model="fieldForm.uniqueKey" placeholder="例如：${vin}（选填，格式为 ${...}）" clearable />
-        <div class="form-tip">非必填项，同表内不能重复。格式必须为 ${...}（如 ${vin}），用于全局或跨系统唯一业务映射。</div>
+      <el-form-item prop="uniqueKey" class="unique-key-form-item">
+        <template #label>
+          <div class="label-with-tip">
+            <span>唯一标识</span>
+            <el-tag size="small" type="info" effect="plain">选填 · 跨系统映射</el-tag>
+          </div>
+        </template>
+        <el-input v-model="fieldForm.uniqueKey" placeholder="例如：${vin}（同表内唯一，格式为 ${...}）" clearable />
+        <div class="form-tip">用于跨系统或全局统一映射，同表内不可重复。格式如 <code>${vin}</code>。</div>
       </el-form-item>
       <div class="two-columns">
         <el-form-item label="数据类型" prop="dataType">
@@ -158,6 +164,7 @@
   
       <div v-if="fieldForm.required" class="required-config-panel">
         <div class="required-config-header">
+          <el-icon><WarningFilled /></el-icon>
           <span class="required-config-title">必填规则与提醒配置</span>
         </div>
         <div class="two-columns" style="margin-top: 10px;">
@@ -246,6 +253,7 @@
 </template>
 
 <script setup name="DynamicFieldDrawer">
+import { WarningFilled } from '@element-plus/icons-vue'
 import { optionselect } from '@/api/system/dict/type'
 import { getDynamicDictOptions } from '@/api/system/dynamicTable'
 import { fetchApiOptions } from '@/utils/dynamicSource'
@@ -765,6 +773,14 @@ watch(open, visible => {
 </script>
 
 <style scoped lang="scss">
+.field-form-container {
+  padding-bottom: 24px;
+}
+.label-with-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .form-tip { margin-top: 5px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
 .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .field-alert { margin-bottom: 18px; }
@@ -774,24 +790,48 @@ watch(open, visible => {
 .option-row { display: grid; grid-template-columns: 1fr 1fr 130px 36px 32px; gap: 8px; align-items: center; margin-bottom: 8px; }
 .color-option-item { display: flex; align-items: center; gap: 8px; }
 .color-badge { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none; border: 1px solid rgba(0, 0, 0, 0.1); }
-.switch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin-bottom: 22px; }
-.switch-grid label { display: flex; align-items: center; justify-content: space-between; padding: 11px 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 7px; }
-.switch-grid b, .switch-grid small { display: block; }
-.switch-grid b { font-size: 13px; }
-.switch-grid small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 11px; }
-.required-config-panel {
-  padding: 14px 16px 6px;
-  margin-top: -10px;
-  margin-bottom: 20px;
-  background: var(--el-fill-color-extra-light);
-  border: 1px dashed var(--el-color-warning-light-5);
+.switch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.switch-grid label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
+  background: var(--el-bg-color);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+}
+.switch-grid label:hover {
+  border-color: var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+.switch-grid b, .switch-grid small { display: block; }
+.switch-grid b { font-size: 13px; color: var(--el-text-color-primary); }
+.switch-grid small { margin-top: 4px; color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.3; }
+.required-config-panel {
+  padding: 16px;
+  margin-top: -8px;
+  margin-bottom: 22px;
+  background: #fffcf5;
+  border: 1px solid #faecd8;
+  border-radius: 8px;
+  box-shadow: 0 1px 4px rgba(230, 162, 60, 0.08);
 }
 .required-config-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--el-color-warning-dark-2);
-  margin-bottom: 6px;
+  color: #b88230;
+  margin-bottom: 8px;
 }
 .required-color-bar {
   display: flex;
@@ -800,4 +840,24 @@ watch(open, visible => {
   flex-wrap: wrap;
 }
 .advanced-config :deep(.el-form-item) { margin-bottom: 18px; }
+</style>
+
+<style>
+.dynamic-field-drawer.el-drawer {
+  display: flex;
+  flex-direction: column;
+}
+.dynamic-field-drawer .el-drawer__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  box-sizing: border-box;
+}
+.dynamic-field-drawer .el-drawer__footer {
+  flex: none;
+  padding: 14px 24px;
+  border-top: 1px solid var(--el-border-color-lighter);
+  background: var(--el-bg-color);
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.03);
+}
 </style>

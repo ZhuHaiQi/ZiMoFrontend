@@ -9,8 +9,9 @@
   >
     <dynamic-data-manager
       v-if="open && runtimeSchema?.tabs?.length"
-      :key="`${runtimeSchema.id || runtimeSchema.tableId}:${runtimeSchema.runtimeDeptId}`"
+      :key="`${runtimeSchema.tableCode || runtimeSchema.id || runtimeSchema.tableId}:${runtimeSchema.runtimeDeptId}`"
       :schema="runtimeSchema"
+      :dept-id="targetDeptId"
       :dict-options="dictOptions"
       @ready="loading = false"
     />
@@ -23,12 +24,15 @@
 
 <script setup name="DynamicDataDrawer">
 import DynamicDataManager from './DynamicDataManager.vue'
-import { getDynamicRuntimeSchema } from '@/api/system/dynamicTable'
+import { getDynamicRuntimeSchemaByCode, getDynamicRuntimeSchemaById } from '@/api/system/dynamicTable'
 
 const open = defineModel({ type: Boolean, default: false })
 const loading = defineModel('loading', { type: Boolean, default: false })
 const props = defineProps({
   schema: { type: Object, default: null },
+  tableCode: { type: String, default: '' },
+  tableId: { type: [Number, String], default: null },
+  deptId: { type: [Number, String], default: null },
   dictOptions: { type: Object, default: () => ({}) },
   title: { type: String, default: '动态数据管理' },
   size: { type: [String, Number], default: '88%' }
@@ -37,15 +41,22 @@ const runtimeSchema = ref(null)
 const schemaLoading = ref(false)
 let loadSequence = 0
 
-// 每次打开都从服务端读取当前部门可见的 Tab 和字段，避免使用设计器中的完整 Schema。
-watch([open, () => props.schema?.id ?? props.schema?.tableId], async ([visible, schemaId]) => {
+const targetCode = computed(() => props.tableCode || props.schema?.tableCode || '')
+const targetId = computed(() => props.tableId || props.schema?.id || props.schema?.tableId || null)
+const targetDeptId = computed(() => props.deptId ?? props.schema?.deptId ?? null)
+
+// 每次打开都从服务端读取指定或当前部门可见的 Tab 和字段，优先支持按 tableCode 和指定 deptId 获取。
+watch([open, targetCode, targetId, targetDeptId], async ([visible, code, id, deptId]) => {
   const sequence = ++loadSequence
   runtimeSchema.value = null
-  loading.value = visible && !!schemaId
-  if (!visible || !schemaId) return
+  const identifier = code || id
+  loading.value = visible && !!identifier
+  if (!visible || !identifier) return
   schemaLoading.value = true
   try {
-    const response = await getDynamicRuntimeSchema(schemaId)
+    const response = code
+      ? await getDynamicRuntimeSchemaByCode(code, deptId)
+      : await getDynamicRuntimeSchemaById(id, deptId)
     if (sequence === loadSequence) runtimeSchema.value = response.data
   } finally {
     if (sequence === loadSequence) {

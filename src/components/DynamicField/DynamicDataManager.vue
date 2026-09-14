@@ -31,9 +31,14 @@
     </div>
 
     <div class="data-toolbar">
-      <div>
-        <strong>{{ schema.tableName }} / {{ activeTab?.tabName }}</strong><span>本部门数据</span>
-        <small>点击单元格按需加载控件，失去焦点自动保存，Esc 取消</small>
+      <div class="toolbar-info">
+        <div class="table-tab-badge">
+          <strong class="table-name">{{ schema.tableName }}</strong>
+          <span class="tab-divider">/</span>
+          <span class="tab-name">{{ activeTab?.tabName }}</span>
+        </div>
+        <el-tag size="small" type="info" effect="plain" class="dept-scope-tag">本部门可见</el-tag>
+        <span class="operation-hint">点击单元格即时编辑，失焦自动保存，Esc 取消</span>
       </div>
       <el-button type="primary" icon="Plus" :disabled="loading" @click="handleAdd" v-hasPermi="['system:dynamic:data:add']">
         表格内新增
@@ -95,6 +100,7 @@ import { pageDynamicRecords, addDynamicRecord, updateDynamicRecord, deleteDynami
 
 const props = defineProps({
   schema: { type: Object, required: true },
+  deptId: { type: [Number, String], default: null },
   dictOptions: { type: Object, default: () => ({}) }
 })
 const emit = defineEmits(['ready'])
@@ -118,7 +124,8 @@ const activeTabCode = ref('')
 const switchingTab = ref(false)
 const tabStates = new Map()
 let loadSequence = 0
-const schemaScope = computed(() => `${props.schema.id ?? props.schema.tableId}:${props.schema.runtimeDeptId ?? ''}`)
+const effectiveDeptId = computed(() => props.deptId ?? props.schema.runtimeDeptId ?? null)
+const schemaScope = computed(() => `${props.schema.tableCode || props.schema.id || props.schema.tableId}:${effectiveDeptId.value ?? ''}`)
 const activeTabId = computed(() => activeTab.value?.id ?? activeTab.value?.tabId)
 const scopeKey = computed(() => `${schemaScope.value}:${activeTabId.value ?? ''}`)
 
@@ -178,7 +185,12 @@ async function loadRecords() {
   loading.value = true
   try {
     await flushEditing()
-    const response = await pageDynamicRecords(props.schema.tableCode, { ...query, tabId, filters: buildFilters() })
+    const response = await pageDynamicRecords(props.schema.tableCode, {
+      ...query,
+      tabId,
+      ownerDeptId: effectiveDeptId.value,
+      filters: buildFilters()
+    })
     if (sequence !== loadSequence || requestedScope !== scopeKey.value) return
     const drafts = rows.value.filter(row => row._isDraft)
     rows.value = [...drafts, ...(response.rows || []).map(mapRecord)]
@@ -297,6 +309,7 @@ function handleAdd() {
   }
   const row = {
     _tabId: activeTabId.value,
+    _ownerDeptId: effectiveDeptId.value,
     _clientId: `draft-${Date.now()}-${++draftSequence.value}`,
     _isDraft: true,
     _saving: false,
@@ -383,6 +396,7 @@ async function saveCell({ row, field, value, originalValue }) {
     const targetRecId = row._id ?? row._recordId
     const response = await updateDynamicRecord(props.schema.tableCode, {
       tabId: row._tabId,
+      ownerDeptId: row._ownerDeptId ?? effectiveDeptId.value,
       id: targetRecId,
       recordId: targetRecId,
       version: row._version,
@@ -434,7 +448,12 @@ async function saveDraft(row) {
       return proxy.$modal.msgError(uniqueConflict.error)
     }
 
-    const response = await addDynamicRecord(props.schema.tableCode, { tabId: row._tabId, requestId: row._clientId, data: buildRowData(row) })
+    const response = await addDynamicRecord(props.schema.tableCode, {
+      tabId: row._tabId,
+      ownerDeptId: row._ownerDeptId ?? effectiveDeptId.value,
+      requestId: row._clientId,
+      data: buildRowData(row)
+    })
     if (response.data?.id || response.data?.recordId) {
       // 保留 VXE Table 当前行引用，只把草稿内容就地转换为服务端正式记录。
       replaceWithServerRecord(row, response.data)
@@ -497,7 +516,7 @@ async function handleDelete(row) {
     }
     await dynamicTableRef.value?.cancelEdit(row)
     const targetRecId = row._id ?? row._recordId
-    await deleteDynamicRecord(props.schema.tableCode, targetRecId, row._version, row._tabId)
+    await deleteDynamicRecord(props.schema.tableCode, targetRecId, row._version, row._tabId, row._ownerDeptId ?? effectiveDeptId.value)
     proxy.$modal.msgSuccess('删除成功')
     await loadRecords()
   } finally {
@@ -634,10 +653,38 @@ watch(searchExpanded, () => {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+  gap: 12px;
 }
-.data-toolbar strong { margin-right: 10px; font-size: 16px; }
-.data-toolbar span { color: var(--el-text-color-secondary); font-size: 12px; }
-.data-toolbar small { margin-left: 14px; color: var(--el-text-color-placeholder); font-size: 12px; }
+.toolbar-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.table-tab-badge {
+  display: flex;
+  align-items: center;
+  font-size: 15px;
+}
+.table-name {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+.tab-divider {
+  margin: 0 6px;
+  color: var(--el-text-color-placeholder);
+}
+.tab-name {
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+.dept-scope-tag {
+  border-radius: 4px;
+}
+.operation-hint {
+  color: var(--el-text-color-placeholder);
+  font-size: 12px;
+}
 
 .table-container {
   flex: 1;

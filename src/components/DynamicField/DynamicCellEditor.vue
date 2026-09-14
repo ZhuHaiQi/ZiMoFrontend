@@ -69,8 +69,21 @@
         v-else-if="field.componentType === 'date-picker' || field.componentType === 'datetime-picker'"
         ref="controlRef"
         :model-value="modelValue"
-        :type="field.componentType === 'datetime-picker' ? 'datetime' : 'date'"
-        :value-format="field.componentType === 'datetime-picker' ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD'"
+        :type="datePickerType(field)"
+        :format="datePickerFormat(field)"
+        :value-format="datePickerValueFormat(field)"
+        :placeholder="placeholderOf(field)"
+        v-bind="componentProps(field)"
+        popper-class="vxe-table--ignore-clear"
+        style="width: 100%"
+        @update:model-value="updateValue"
+      />
+      <el-time-picker
+        v-else-if="field.componentType === 'time-picker'"
+        ref="controlRef"
+        :model-value="modelValue"
+        :format="datePickerFormat(field)"
+        :value-format="datePickerValueFormat(field)"
         :placeholder="placeholderOf(field)"
         v-bind="componentProps(field)"
         popper-class="vxe-table--ignore-clear"
@@ -110,7 +123,7 @@
 </template>
 
 <script setup name="DynamicCellEditor">
-import { choiceValue, normalizeValueForField, componentProps, placeholderOf } from '@/utils/dynamicField'
+import { choiceValue, normalizeValueForField, componentProps, placeholderOf, datePickerType, datePickerFormat, datePickerValueFormat } from '@/utils/dynamicField'
 
 const props = defineProps({
   modelValue: { default: undefined },

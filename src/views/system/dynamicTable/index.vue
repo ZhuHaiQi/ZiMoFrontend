@@ -517,7 +517,7 @@ function componentLabel(field) { return catalog.value.find(item => item.value ==
 
 function fieldLabel(fieldKey) { return fields.value.find(field => field.fieldKey === fieldKey)?.fieldLabel || fieldKey }
 
-function typeShort(type) { return ({ STRING: 'Aa', TEXT: 'Tx', INTEGER: '12', DECIMAL: '.0', BOOLEAN: '01', DATE: '日', DATETIME: '时', JSON: '{}' })[type] || '?' }
+function typeShort(type) { return ({ STRING: 'Aa', TEXT: 'Tx', INTEGER: '12', DECIMAL: '.0', BOOLEAN: '01', DATE: '日', DATETIME: '时', TIME: '分', JSON: '{}' })[type] || '?' }
 
 function sampleValue(field, rowIndex) {
   const options = parseJson(field.optionsJson, [])
@@ -527,6 +527,7 @@ function sampleValue(field, rowIndex) {
   if (field.dataType === 'DECIMAL') return 19.9 + rowIndex
   if (field.dataType === 'DATE') return `2026-09-0${rowIndex + 1}`
   if (field.dataType === 'DATETIME') return `2026-09-0${rowIndex + 1} 10:30:00`
+  if (field.dataType === 'TIME') return '14:30:00'
   if (field.dataType === 'JSON') return resolvedOptions.slice(0, Math.min(rowIndex + 1, 2)).map(item => item.value)
   if (resolvedOptions.length) return resolvedOptions[rowIndex % resolvedOptions.length].value
   if (field.componentType === 'color-picker') return ['#409eff', '#67c23a', '#e6a23c'][rowIndex]
@@ -611,7 +612,7 @@ code { color: var(--el-text-color-secondary); font-family: Consolas, monospace; 
 .field-type-icon { width: 34px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 8px; font: 600 12px Consolas; color: #409eff; background: #ecf5ff; }
 .type-integer, .type-decimal { color: #e6a23c; background: #fdf6ec; }
 .type-boolean { color: #67c23a; background: #f0f9eb; }
-.type-date, .type-datetime { color: #9b6ad6; background: #f5effc; }
+.type-date, .type-datetime, .type-time { color: #9b6ad6; background: #f5effc; }
 .type-json { color: #f56c6c; background: #fef0f0; }
 .field-label { font-weight: 600; line-height: 22px; }
 .required { margin-right: 3px; color: var(--el-color-danger); }

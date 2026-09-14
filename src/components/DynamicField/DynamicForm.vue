@@ -57,8 +57,18 @@
           <el-date-picker
             v-else-if="field.componentType === 'date-picker' || field.componentType === 'datetime-picker'"
             v-model="formState[field.fieldKey]"
-            :type="field.componentType === 'datetime-picker' ? 'datetime' : 'date'"
-            :value-format="field.componentType === 'datetime-picker' ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD'"
+            :type="datePickerType(field)"
+            :format="datePickerFormat(field)"
+            :value-format="datePickerValueFormat(field)"
+            :placeholder="placeholderOf(field)"
+            v-bind="componentProps(field)"
+            style="width: 100%"
+          />
+          <el-time-picker
+            v-else-if="field.componentType === 'time-picker'"
+            v-model="formState[field.fieldKey]"
+            :format="datePickerFormat(field)"
+            :value-format="datePickerValueFormat(field)"
             :placeholder="placeholderOf(field)"
             v-bind="componentProps(field)"
             style="width: 100%"
@@ -74,7 +84,7 @@
 </template>
 
 <script setup name="DynamicFieldForm">
-import { parseJson, choiceValue, normalizeValueForField, componentProps, placeholderOf, defaultValueOf } from '@/utils/dynamicField'
+import { parseJson, choiceValue, normalizeValueForField, componentProps, placeholderOf, defaultValueOf, datePickerType, datePickerFormat, datePickerValueFormat } from '@/utils/dynamicField'
 import { useFieldOptions } from './useFieldOptions'
 
 const props = defineProps({

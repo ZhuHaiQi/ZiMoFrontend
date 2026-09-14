@@ -40,9 +40,7 @@
       :align="field.align || 'center'"
       :edit-render="editableFieldKeys.has(field.fieldKey) ? {} : null"
     >
-      <template #header>
-        <!-- 自定义表头插槽会替换 vxe 内置的 renderEditHeader，铅笔图标需要手动补回。 -->
-        <span v-if="editableFieldKeys.has(field.fieldKey)" class="vxe-cell--edit-icon"><i class="vxe-table-icon-edit" /></span>
+      <template #title>
         <span v-if="field.required" class="required-mark">*</span>{{ field.fieldLabel }}
       </template>
       <template #edit="{ row }">
@@ -124,7 +122,7 @@ import { VxeTable, VxeColumn } from 'vxe-table'
 import 'vxe-table/lib/style.css'
 import { Edit, Loading } from '@element-plus/icons-vue'
 import { dictColorTagStyle } from '@/utils/dictColor'
-import { parseJson, isEmpty, booleanValue, isTableFieldEditable, isChoiceField as hasOptions } from '@/utils/dynamicField'
+import { parseJson, isEmpty, booleanValue, isTableFieldEditable, isChoiceField as hasOptions, formatDateValue } from '@/utils/dynamicField'
 import { useFieldOptions } from './useFieldOptions'
 import DynamicCellEditor from './DynamicCellEditor.vue'
 
@@ -155,9 +153,11 @@ const editing = reactive({ row: null, field: null, value: undefined, originalVal
 const rowConfig = { keyField: '_clientId', isHover: true }
 const cellConfig = { height: 48 }
 const columnConfig = { resizable: true }
-const seqConfig = computed(() => ({ startIndex: props.sequenceStart }))
 const sortConfig = computed(() => ({
   remote: true,
+  trigger: 'cell',
+  showIcon: true,
+  orders: ['asc', 'desc', null],
   defaultSort: props.defaultSortField
     ? { field: props.defaultSortField, order: props.defaultSortOrder === 'asc' ? 'asc' : 'desc' }
     : undefined
@@ -241,12 +241,21 @@ function handleScroll({ isX, isY }) {
   if ((isX || isY) && editing.row) finishEdit(editing.row)
 }
 
-function handleSortChange({ field, order }) {
+function handleSortChange({ field, property, column, order }) {
+  const sortProp = field || property || column?.field || column?.property
   emit('sort-change', {
-    prop: field,
+    prop: sortProp,
     order: order === 'asc' ? 'ascending' : order === 'desc' ? 'descending' : null
   })
 }
+
+watch([() => props.defaultSortField, () => props.defaultSortOrder], ([field, order]) => {
+  if (field) {
+    tableRef.value?.sort(field, order === 'asc' ? 'asc' : 'desc')
+  } else {
+    tableRef.value?.clearSort()
+  }
+})
 
 function getFieldRequiredColor(field) {
   const validation = parseJson(field?.validationJson, {})
@@ -330,8 +339,16 @@ function displayValue(field, value) {
   if (isEmpty(value)) return '-'
   if (Array.isArray(value)) return value.join('、')
   if (typeof value === 'object') return JSON.stringify(value)
-  if (field.dataType === 'DATE') return String(value).slice(0, 10)
-  if (field.dataType === 'DATETIME') return String(value).replace('T', ' ').slice(0, 19)
+  if (['DATE', 'DATETIME', 'TIME'].includes(field.dataType)) {
+    const props = parseJson(field.componentPropsJson, {})
+    const pattern = props.displayFormat || props.format
+    if (pattern) {
+      return formatDateValue(value, pattern)
+    }
+    if (field.dataType === 'DATE') return String(value).slice(0, 10)
+    if (field.dataType === 'DATETIME') return String(value).replace('T', ' ').slice(0, 19)
+    if (field.dataType === 'TIME') return String(value).slice(0, 8)
+  }
   return value
 }
 
@@ -356,13 +373,35 @@ defineExpose({ startEdit, finishEdit, cancelEdit, applySort, recalculate })
   height: 48px !important;
   padding: 0 !important;
 }
-:deep(.vxe-table--render-default .vxe-cell) {
+:deep(.vxe-table--render-default .vxe-body--column .vxe-cell) {
   height: 48px !important;
   max-height: 48px !important;
   padding: 0 8px;
   display: flex;
   align-items: center;
   box-sizing: border-box;
+}
+
+:deep(.vxe-table--render-default .vxe-header--column .vxe-cell) {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+:deep(.vxe-table--render-default .vxe-header--column.col--center .vxe-cell) {
+  justify-content: center;
+}
+:deep(.vxe-table--render-default .vxe-header--column.col--left .vxe-cell) {
+  justify-content: flex-start;
+}
+:deep(.vxe-table--render-default .vxe-header--column.col--right .vxe-cell) {
+  justify-content: flex-end;
+}
+:deep(.vxe-table--render-default .vxe-header--column.is--sortable) {
+  cursor: pointer;
+  user-select: none;
+}
+:deep(.vxe-table--render-default .vxe-header--column.is--sortable:hover) {
+  background-color: var(--el-fill-color-light);
 }
 
 .dynamic-cell {

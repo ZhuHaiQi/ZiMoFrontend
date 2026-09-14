@@ -56,8 +56,8 @@
         :editable="canEditCell"
         :show-row-number="schema.showRowNumber"
         :sequence-start="(query.pageNum - 1) * query.pageSize"
-        :default-sort-field="query.sortField"
-        :default-sort-order="query.sortOrder"
+        :default-sort-field="defaultSortConfig.fieldKey"
+        :default-sort-order="defaultSortConfig.order"
         @sort-change="handleSort"
         @cell-change="handleCellChange"
       >
@@ -143,6 +143,16 @@ const activeTab = computed(() => visibleTabs.value.find(tab => tab.tabCode === a
 const activeFields = computed(() => {
   const fieldMap = new Map(schemaFields.value.map(field => [field.fieldKey, field]))
   return (activeTab.value?.fieldKeys || []).map(fieldKey => fieldMap.get(fieldKey)).filter(Boolean)
+})
+
+const defaultSortConfig = computed(() => {
+  const sortFieldKey = activeTab.value?.defaultSortField || props.schema?.defaultSortField
+  const sortOrder = activeTab.value?.defaultSortOrder || props.schema?.defaultSortOrder || 'desc'
+  const field = activeFields.value.find(f => f.fieldKey === sortFieldKey && f.sortable)
+  return {
+    fieldKey: field?.fieldKey || '',
+    order: field && sortOrder === 'asc' ? 'asc' : 'desc'
+  }
 })
 
 const editableFields = computed(() => activeFields.value.filter(isTableFieldEditable))
@@ -259,10 +269,8 @@ async function handleSort({ prop, order }) {
 }
 
 function resetDefaultSort() {
-  const defaultField = activeFields.value.find(field => field.fieldKey === props.schema.defaultSortField
-    && field.sortable)
-  query.sortField = defaultField?.fieldKey || ''
-  query.sortOrder = defaultField && props.schema.defaultSortOrder === 'asc' ? 'asc' : 'desc'
+  query.sortField = defaultSortConfig.value.fieldKey
+  query.sortOrder = defaultSortConfig.value.order
 }
 
 async function handleTabChange() {

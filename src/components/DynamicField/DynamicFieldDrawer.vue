@@ -28,6 +28,85 @@
         </el-form-item>
       </div>
       <el-alert title="数据类型决定值的语义，组件类型决定编辑方式；仅展示兼容组合。" type="info" :closable="false" show-icon class="field-alert" />
+
+      <!-- 日期/时间统一配置面板 -->
+      <div v-if="isDateTimeField(fieldForm)" class="date-time-config-panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            <el-icon class="panel-icon"><Calendar /></el-icon>
+            <span>日期时间格式与展示配置</span>
+          </div>
+          <el-tag size="small" type="primary" effect="plain">统一格式器</el-tag>
+        </div>
+
+        <el-form-item label="时间模式 (粒度)">
+          <el-radio-group v-model="currentDateTimeMode" class="date-time-mode-group" @change="handleDateTimeModeChange">
+            <el-radio-button v-for="item in dateTimeModes" :key="item.mode" :value="item.mode">
+              {{ item.label }}
+            </el-radio-button>
+          </el-radio-group>
+          <div class="form-tip">切换时间粒度将自动协同调整底层数据类型与对应选择器控件。</div>
+        </el-form-item>
+
+        <div class="two-columns">
+          <el-form-item label="选择器格式 (Format)">
+            <el-input v-model="dateTimeFormat" placeholder="如：YYYY-MM-DD HH:mm:ss" clearable />
+            <div class="format-presets">
+              <span class="preset-label">快捷预设：</span>
+              <el-tag
+                v-for="preset in currentFormatPresets"
+                :key="preset"
+                size="small"
+                class="preset-tag"
+                effect="plain"
+                @click="dateTimeFormat = preset"
+              >
+                {{ preset }}
+              </el-tag>
+            </div>
+            <div class="form-tip">用户在选择器面板与输入框中查看和选择的格式。</div>
+          </el-form-item>
+
+          <el-form-item label="表格显示格式 (Display Format)">
+            <el-input v-model="dateTimeDisplayFormat" placeholder="如：YYYY-MM-DD HH:mm" clearable />
+            <div class="format-presets">
+              <span class="preset-label">快捷预设：</span>
+              <el-tag
+                v-for="preset in currentDisplayPresets"
+                :key="preset"
+                size="small"
+                class="preset-tag"
+                effect="plain"
+                @click="dateTimeDisplayFormat = preset"
+              >
+                {{ preset }}
+              </el-tag>
+            </div>
+            <div class="form-tip">表格只读单元格中的显示形态，可更紧凑省空间。</div>
+          </el-form-item>
+        </div>
+
+        <!-- 实时效果预览 -->
+        <div class="live-preview-box">
+          <div class="preview-title">
+            <el-icon><View /></el-icon>
+            <span>当前格式实时预览 (以当前时间为例)</span>
+          </div>
+          <div class="preview-content">
+            <div class="preview-item">
+              <span class="preview-label">选择器显示：</span>
+              <span class="preview-value picker-preview">
+                <el-icon><Calendar /></el-icon>
+                <span>{{ previewPickerText }}</span>
+              </span>
+            </div>
+            <div class="preview-item">
+              <span class="preview-label">表格单元格：</span>
+              <span class="preview-value table-preview">{{ previewTableText }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
       <div v-if="isChoiceComponent" class="source-config">
         <div class="section-title"><span>选项来源</span></div>
         <el-radio-group v-model="fieldForm.optionSource" @change="handleOptionSourceChange">
@@ -253,11 +332,11 @@
 </template>
 
 <script setup name="DynamicFieldDrawer">
-import { WarningFilled } from '@element-plus/icons-vue'
+import { WarningFilled, Calendar, View } from '@element-plus/icons-vue'
 import { optionselect } from '@/api/system/dict/type'
 import { getDynamicDictOptions } from '@/api/system/dynamicTable'
 import { fetchApiOptions } from '@/utils/dynamicSource'
-import { parseJson } from '@/utils/dynamicField'
+import { parseJson, isDateTimeField, DATE_TIME_MODES, formatDateValue } from '@/utils/dynamicField'
 
 const open = defineModel({ type: Boolean, default: false })
 const props = defineProps({
@@ -274,6 +353,36 @@ const dictOptionsLoading = ref(false)
 const otherFields = computed(() => props.fields.filter(field => field !== props.field))
 let draftVersion = 0
 let dictRequestId = 0
+
+// 日期时间模式与格式配置
+const dateTimeModes = DATE_TIME_MODES
+const currentDateTimeMode = ref('date')
+const dateTimeFormat = ref('')
+const dateTimeDisplayFormat = ref('')
+const nowTime = ref(new Date())
+let clockTimer = null
+
+onMounted(() => {
+  clockTimer = setInterval(() => { nowTime.value = new Date() }, 1000)
+})
+
+onUnmounted(() => {
+  if (clockTimer) clearInterval(clockTimer)
+})
+
+const activeModeConfig = computed(() => dateTimeModes.find(m => m.mode === currentDateTimeMode.value) || dateTimeModes[0])
+const currentFormatPresets = computed(() => activeModeConfig.value.formatPresets || [])
+const currentDisplayPresets = computed(() => activeModeConfig.value.displayPresets || [])
+
+const previewPickerText = computed(() => {
+  const fmt = dateTimeFormat.value || activeModeConfig.value.defaultFormat
+  return formatDateValue(nowTime.value, fmt)
+})
+const previewTableText = computed(() => {
+  const fmt = dateTimeDisplayFormat.value || dateTimeFormat.value || activeModeConfig.value.defaultDisplayFormat
+  return formatDateValue(nowTime.value, fmt)
+})
+
 const fieldApiConfig = reactive({
   url: '',
   method: 'GET',
@@ -488,6 +597,10 @@ function handleDataTypeChange(dataType) {
   fieldForm.defaultValue = ''
   if (dataType === 'JSON') fieldForm.sortable = false
   fieldOptions.value = []
+  if (['DATE', 'DATETIME', 'TIME'].includes(dataType)) {
+    syncDateTimeModeFromField()
+    updateDateTimeComponentProps()
+  }
 }
 
 function handleComponentChange(componentType) {
@@ -501,7 +614,65 @@ function handleComponentChange(componentType) {
       { label: '否', value: 'false', type: 'info' }
     ]
   }
+  if (['date-picker', 'datetime-picker', 'time-picker'].includes(componentType)) {
+    syncDateTimeModeFromField()
+    updateDateTimeComponentProps()
+  }
 }
+
+function handleDateTimeModeChange(mode) {
+  const config = dateTimeModes.find(m => m.mode === mode)
+  if (!config) return
+  currentDateTimeMode.value = mode
+  fieldForm.dataType = config.dataType
+  fieldForm.componentType = config.componentType
+  dateTimeFormat.value = config.defaultFormat
+  dateTimeDisplayFormat.value = config.defaultDisplayFormat
+  updateDateTimeComponentProps(config)
+}
+
+function syncDateTimeModeFromField() {
+  const compProps = parseJson(fieldForm.componentPropsJson, {})
+  if (fieldForm.dataType === 'DATETIME' || fieldForm.componentType === 'datetime-picker') {
+    currentDateTimeMode.value = 'datetime'
+  } else if (fieldForm.dataType === 'TIME' || fieldForm.componentType === 'time-picker') {
+    currentDateTimeMode.value = 'time'
+  } else if (compProps.pickerType === 'month') {
+    currentDateTimeMode.value = 'month'
+  } else if (fieldForm.dataType === 'DATE' || fieldForm.componentType === 'date-picker') {
+    currentDateTimeMode.value = 'date'
+  }
+  const config = dateTimeModes.find(m => m.mode === currentDateTimeMode.value) || dateTimeModes[0]
+  if (!dateTimeFormat.value) dateTimeFormat.value = compProps.format || config.defaultFormat
+  if (!dateTimeDisplayFormat.value) dateTimeDisplayFormat.value = compProps.displayFormat || config.defaultDisplayFormat
+}
+
+function updateDateTimeComponentProps(config = activeModeConfig.value) {
+  const componentProps = parseJson(fieldForm.componentPropsJson, {})
+  if (config?.pickerType) {
+    componentProps.pickerType = config.pickerType
+  } else {
+    delete componentProps.pickerType
+  }
+  if (dateTimeFormat.value) {
+    componentProps.format = dateTimeFormat.value
+    componentProps.valueFormat = dateTimeFormat.value
+  } else {
+    delete componentProps.format
+    delete componentProps.valueFormat
+  }
+  if (dateTimeDisplayFormat.value) {
+    componentProps.displayFormat = dateTimeDisplayFormat.value
+  } else {
+    delete componentProps.displayFormat
+  }
+  fieldForm.componentPropsJson = JSON.stringify(componentProps)
+}
+
+watch([dateTimeFormat, dateTimeDisplayFormat], () => {
+  if (!isDateTimeField(fieldForm)) return
+  updateDateTimeComponentProps()
+})
 
 function handleOptionSourceChange(source) {
   fieldForm.defaultValue = ''
@@ -694,6 +865,11 @@ async function submitField() {
       }
       fieldForm.componentPropsJson = JSON.stringify(componentProps)
     }
+
+    if (isDateTimeField(fieldForm)) {
+      updateDateTimeComponentProps()
+    }
+
     const field = {
       ...JSON.parse(JSON.stringify(fieldForm)),
       fieldKey: normalizedFieldKey,
@@ -735,6 +911,14 @@ function initializeDraft() {
   apiTesting.value = false
   fieldApplying.value = false
   dictOptionsLoading.value = false
+
+  const compProps = parseJson(source.componentPropsJson, {})
+  dateTimeFormat.value = compProps.format || ''
+  dateTimeDisplayFormat.value = compProps.displayFormat || ''
+  if (isDateTimeField(fieldForm)) {
+    syncDateTimeModeFromField()
+  }
+
   if (fieldForm.optionSource === 'DICT') loadCurrentDictOptions()
   if (fieldForm.optionSource === 'API' && fieldApiConfig.url) testFetchApiOptions(true)
   nextTick(() => fieldFormRef.value?.clearValidate())
@@ -784,6 +968,137 @@ watch(open, visible => {
 .form-tip { margin-top: 5px; color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.5; }
 .two-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .field-alert { margin-bottom: 18px; }
+.date-time-config-panel {
+  padding: 16px 18px;
+  margin-bottom: 20px;
+  background: #f7faff;
+  border: 1px solid #d4e7fe;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.06);
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed #d4e7fe;
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--el-color-primary);
+
+      .panel-icon {
+        font-size: 16px;
+      }
+    }
+  }
+
+  .date-time-mode-group {
+    display: flex;
+    width: 100%;
+
+    :deep(.el-radio-button) {
+      flex: 1;
+      text-align: center;
+      .el-radio-button__inner {
+        width: 100%;
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+    }
+  }
+
+  .format-presets {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+
+    .preset-label {
+      font-size: 11px;
+      color: var(--el-text-color-secondary);
+    }
+
+    .preset-tag {
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 4px;
+
+      &:hover {
+        color: var(--el-color-primary);
+        border-color: var(--el-color-primary);
+        background-color: var(--el-color-primary-light-9);
+        transform: translateY(-1px);
+      }
+    }
+  }
+
+  .live-preview-box {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: #ffffff;
+    border: 1px solid #e1ecfb;
+    border-radius: 8px;
+
+    .preview-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--el-text-color-regular);
+      margin-bottom: 10px;
+    }
+
+    .preview-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+
+      .preview-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+
+        .preview-label {
+          color: var(--el-text-color-secondary);
+          flex-shrink: 0;
+        }
+
+        .preview-value {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-family: var(--el-font-family-mono, monospace);
+          font-weight: 500;
+        }
+
+        .picker-preview {
+          padding: 3px 8px;
+          background: var(--el-fill-color-light);
+          border: 1px solid var(--el-border-color-lighter);
+          border-radius: 4px;
+          color: var(--el-text-color-primary);
+        }
+
+        .table-preview {
+          padding: 3px 8px;
+          background: var(--el-color-primary-light-9);
+          border: 1px solid var(--el-color-primary-light-7);
+          border-radius: 4px;
+          color: var(--el-color-primary-dark-2);
+        }
+      }
+    }
+  }
+}
 .source-config { padding: 0 0 18px; }
 .section-title { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 12px; padding-bottom: 8px; font-weight: 600; border-bottom: 1px solid var(--el-border-color-lighter); }
 .option-editor { padding: 12px; margin-bottom: 20px; background: var(--el-fill-color-extra-light); border-radius: 8px; }

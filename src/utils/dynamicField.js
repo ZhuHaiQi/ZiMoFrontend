@@ -227,3 +227,71 @@ export function formatDateValue(value, pattern) {
   return pattern.replace(/YYYY|YY|MM|M|DD|D|HH|H|mm|m|ss|s/g, match => map[match] ?? match)
 }
 
+/**
+ * 校验两个字段值在业务语义上是否等价（未发生实质变更）。
+ * 覆盖空值等价性（null/undefined/""/[]）、布尔归一化、数字类型精度归一化、日期时间格式差异、多选数组集合比对等。
+ */
+export function isSameFieldValue(field, left, right) {
+  // 1. 空值等价性判定：若两者皆为空（null, undefined, '', []），视为未变更
+  const leftEmpty = isEmpty(left)
+  const rightEmpty = isEmpty(right)
+  if (leftEmpty && rightEmpty) return true
+  if (leftEmpty !== rightEmpty) return false
+
+  // 2. 布尔类型归一化比对
+  if (field?.dataType === 'BOOLEAN') {
+    return booleanValue(left) === booleanValue(right)
+  }
+
+  // 3. 数字类型归一化比对
+  if (['INTEGER', 'DECIMAL'].includes(field?.dataType) || field?.componentType === 'input-number') {
+    const numLeft = Number(left)
+    const numRight = Number(right)
+    if (!Number.isNaN(numLeft) && !Number.isNaN(numRight)) {
+      return numLeft === numRight
+    }
+  }
+
+  // 4. 多选或数组类型比对
+  if (isMultiChoiceField(field) || Array.isArray(left) || Array.isArray(right) || field?.dataType === 'JSON') {
+    const arrLeft = Array.isArray(left) ? left : parseJson(left, [left])
+    const arrRight = Array.isArray(right) ? right : parseJson(right, [right])
+    if (Array.isArray(arrLeft) && Array.isArray(arrRight)) {
+      if (arrLeft.length !== arrRight.length) return false
+      const sortedLeft = arrLeft.map(String).sort()
+      const sortedRight = arrRight.map(String).sort()
+      return sortedLeft.every((val, idx) => val === sortedRight[idx])
+    }
+  }
+
+  // 5. 日期与时间类型归一化比对
+  if (isDateTimeField(field)) {
+    const cleanStr = val => String(val).trim().replace('T', ' ').replace(/\.0+$/, '')
+    const strLeft = cleanStr(left)
+    const strRight = cleanStr(right)
+    if (strLeft === strRight) return true
+
+    if (field?.dataType === 'DATE') {
+      return strLeft.slice(0, 10) === strRight.slice(0, 10)
+    }
+    if (field?.dataType === 'TIME') {
+      return strLeft.slice(0, 8) === strRight.slice(0, 8)
+    }
+    if (field?.dataType === 'DATETIME') {
+      return strLeft.slice(0, 19) === strRight.slice(0, 19)
+    }
+  }
+
+  // 6. 对象类型回退到 JSON 序列化比对
+  if (typeof left === 'object' || typeof right === 'object') {
+    try {
+      return JSON.stringify(left) === JSON.stringify(right)
+    } catch {
+      return false
+    }
+  }
+
+  // 7. 常规字符串比对
+  return String(left) === String(right)
+}
+

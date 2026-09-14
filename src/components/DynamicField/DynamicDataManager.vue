@@ -93,7 +93,7 @@
 
 <script setup name="DynamicDataManager">
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
-import { parseJson, isEmpty, defaultValueOf, isTableFieldEditable } from '@/utils/dynamicField'
+import { parseJson, isEmpty, defaultValueOf, isTableFieldEditable, isSameFieldValue } from '@/utils/dynamicField'
 import DynamicTable from './DynamicTable.vue'
 import DynamicForm from './DynamicForm.vue'
 import { pageDynamicRecords, addDynamicRecord, updateDynamicRecord, deleteDynamicRecord } from '@/api/system/dynamicTable'
@@ -347,7 +347,7 @@ function focusFirstCell(row) {
 /** 将 VXE 的编辑关闭事件加入保存队列，翻页和查询前会等待队列清空。 */
 function handleCellChange(payload) {
   if (!editableFieldKeys.value.has(payload.field.fieldKey)) return
-  if (sameValue(payload.value, payload.originalValue)) return
+  if (isSameFieldValue(payload.field, payload.value, payload.originalValue)) return
   if (payload.row._isDraft) {
     saveCell(payload)
     return
@@ -373,7 +373,7 @@ function handleCellChange(payload) {
 
 async function saveCell({ row, field, value, originalValue }) {
   if (!editableFieldKeys.value.has(field.fieldKey)) return false
-  if (sameValue(value, originalValue)) return true
+  if (isSameFieldValue(field, value, originalValue)) return true
   // 草稿先保留用户输入，必填空值由单元格浅红背景提示，统一在保存新增时拦截。
   if (row._isDraft) {
     row[field.fieldKey] = cloneValue(value)
@@ -568,7 +568,7 @@ function validateRowUnique(row, field, value) {
     if (otherKey === field.fieldKey) continue
     const otherVal = row[otherKey]
     if (isEmpty(otherVal)) continue
-    if (sameValue(value, otherVal)) {
+    if (isSameFieldValue(field, value, otherVal)) {
       const otherField = activeFields.value.find(f => f.fieldKey === otherKey)
       const otherLabel = otherField?.fieldLabel || otherKey
       return `【${field.fieldLabel}】的值不能与同行的【${otherLabel}】重复`
@@ -593,8 +593,8 @@ function cloneValue(value) {
   return JSON.parse(JSON.stringify(value))
 }
 
-function sameValue(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right)
+function sameValue(left, right, field) {
+  return isSameFieldValue(field, left, right)
 }
 
 watch(schemaScope, () => {

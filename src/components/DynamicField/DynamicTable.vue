@@ -122,7 +122,7 @@ import { VxeTable, VxeColumn } from 'vxe-table'
 import 'vxe-table/lib/style.css'
 import { Edit, Loading } from '@element-plus/icons-vue'
 import { dictColorTagStyle } from '@/utils/dictColor'
-import { parseJson, isEmpty, booleanValue, isTableFieldEditable, isChoiceField as hasOptions, formatDateValue } from '@/utils/dynamicField'
+import { parseJson, isEmpty, booleanValue, isTableFieldEditable, isChoiceField as hasOptions, formatDateValue, isSameFieldValue } from '@/utils/dynamicField'
 import { useFieldOptions } from './useFieldOptions'
 import DynamicCellEditor from './DynamicCellEditor.vue'
 
@@ -226,6 +226,10 @@ function handleEditClosed({ row, column }) {
   const field = editing.field || fieldOf(column.field)
   if (!field || editing.row !== row) return resetEditing()
   if (!editing.cancelled && editableFieldKeys.value.has(field.fieldKey)) {
+    // 若值未发生实质性语义变更，直接退出，不发射 cell-change 事件
+    if (isSameFieldValue(field, editing.value, editing.originalValue)) {
+      return resetEditing()
+    }
     emit('cell-change', {
       row,
       field,

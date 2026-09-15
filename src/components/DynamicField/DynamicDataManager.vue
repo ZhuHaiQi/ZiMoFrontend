@@ -93,7 +93,7 @@
 
 <script setup name="DynamicDataManager">
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
-import { parseJson, isEmpty, defaultValueOf, isTableFieldEditable, isSameFieldValue } from '@/utils/dynamicField'
+import { parseJson, isEmpty, defaultValueOf, isTableFieldEditable, isSameFieldValue, isMultiChoiceField } from '@/utils/dynamicField'
 import DynamicTable from './DynamicTable.vue'
 import DynamicForm from './DynamicForm.vue'
 import { pageDynamicRecords, addDynamicRecord, updateDynamicRecord, deleteDynamicRecord } from '@/api/system/dynamicTable'
@@ -160,6 +160,8 @@ const editableFieldKeys = computed(() => new Set(editableFields.value.map(field 
 
 const searchFields = computed(() => activeFields.value
   .filter(field => field.searchable)
+  // 与 DynamicForm 的显示顺序一致，收起时才能截取实际展示的前八项。
+  .sort((a, b) => (a.sort || 0) - (b.sort || 0))
   .map(field => ({
     ...field,
     required: false,
@@ -181,7 +183,9 @@ function buildFilters() {
     if (isEmpty(value)) return []
     return [{
       fieldKey: field.fieldKey,
-      operator: ['STRING', 'TEXT'].includes(field.dataType) && !['select', 'radio'].includes(field.componentType) ? 'CONTAINS' : 'EQ',
+      operator: isMultiChoiceField(field)
+        || (['STRING', 'TEXT'].includes(field.dataType) && !['select', 'radio'].includes(field.componentType))
+        ? 'CONTAINS' : 'EQ',
       value
     }]
   })

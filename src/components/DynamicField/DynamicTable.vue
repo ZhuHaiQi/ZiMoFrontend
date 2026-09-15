@@ -358,7 +358,9 @@ function displayValue(field, value) {
 
 function cloneValue(value) {
   if (value === undefined || value === null || typeof value !== 'object') return value
-  return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value))
+  // 字段值来自 Vue 响应式数据，structuredClone 无法复制 Proxy 数组或对象。
+  // 与数据保存层保持一致，按接口的 JSON 数据格式生成独立快照。
+  return JSON.parse(JSON.stringify(value))
 }
 
 function recalculate() {

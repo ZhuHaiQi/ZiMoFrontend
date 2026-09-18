@@ -46,7 +46,9 @@
     </div>
 
     <div class="table-container">
+      <!-- Tab 切换后重新注册完整列，避免 VXE 复用旧列导致版本列插入业务列中间。 -->
       <dynamic-table
+        :key="scopeKey"
         ref="dynamicTableRef"
         height="100%"
         :fields="activeFields"

@@ -136,6 +136,8 @@
           </el-form-item>
         </div>
 
+        <dynamic-tab-query-settings :definition="selectedPoolDefinition" :definitions="draftDefinitions" />
+
         <div class="field-section">
           <div class="section-title">
             <strong>引用部门列表</strong>
@@ -177,6 +179,7 @@
             />
           </el-form-item>
         </div>
+        <dynamic-tab-query-settings :definition="currentDefinition" :definitions="draftDefinitions" :assignment="currentTab" :department-tabs="currentDepartment.tabs" />
         <div class="dept-settings-card">
           <div class="dept-status-col">
             <span class="setting-label">本部门启用</span>
@@ -230,6 +233,7 @@
               v-for="field in configurableFields"
               :key="field.fieldKey"
               :value="field.fieldKey"
+              :disabled="currentDefinition.queryMode === 'DELETED' && !sourceFieldKeys.has(field.fieldKey) && !currentTab.fieldKeys.includes(field.fieldKey)"
               class="field-checkbox-item"
               border
             >
@@ -264,6 +268,7 @@
 
 <script setup name="DynamicTabDrawer">
 import draggable from 'vuedraggable'
+import DynamicTabQuerySettings from './DynamicTabQuerySettings.vue'
 
 const open = defineModel({ type: Boolean, default: false })
 const props = defineProps({
@@ -295,6 +300,12 @@ const departmentTree = computed(() => buildTree(draftDepartments.value))
 const currentDepartment = computed(() => draftDepartments.value.find(item => item.deptId === selectedDeptId.value) || null)
 const currentTab = computed(() => currentDepartment.value?.tabs.find(item => item._assignmentKey === selectedAssignmentKey.value) || null)
 const currentDefinition = computed(() => definitionOf(currentTab.value))
+const sourceFieldKeys = computed(() => {
+  const ids = new Set(currentTab.value?.sourceTabIds || [])
+  return new Set((currentDepartment.value?.tabs || [])
+    .filter(tab => ids.has(definitionOf(tab)?.id) && definitionOf(tab)?.queryMode !== 'DELETED')
+    .flatMap(tab => tab.fieldKeys))
+})
 const availableDefinitions = computed(() => {
   const used = new Set((currentDepartment.value?.tabs || []).map(tab => tab._definitionKey))
   return draftDefinitions.value.filter(definition => !used.has(definition._definitionKey))
@@ -371,7 +382,8 @@ function initializeDraft() {
         _definitionKey: key,
         id,
         tabName: tab.tabName || '',
-        tabCode: code
+        tabCode: code,
+        queryMode: tab.queryMode || 'NORMAL'
       })
     }
     return key
@@ -404,6 +416,7 @@ function initializeDraft() {
           _assignmentKey: `${department.deptId}:${definitionKey}:${index}`,
           _definitionKey: definitionKey,
           enabled: tab.status !== '1',
+          sourceTabIds: [...(tab.sourceTabIds ?? [])],
           fieldKeys: [...(tab.fieldKeys || [])],
           defaultSortField: tab.defaultSortField || '',
           defaultSortOrder: tab.defaultSortOrder || 'desc',
@@ -423,6 +436,7 @@ function initializeDraft() {
         _assignmentKey: `${deptId}:${registerDefinition(tab)}:${index}`,
         _definitionKey: registerDefinition(tab),
         enabled: tab.status !== '1',
+        sourceTabIds: [...(tab.sourceTabIds ?? [])],
         fieldKeys: [...(tab.fieldKeys || [])],
         defaultSortField: tab.defaultSortField || '',
         defaultSortOrder: tab.defaultSortOrder || 'desc',
@@ -499,7 +513,8 @@ function createPoolTab() {
     _definitionKey: definitionKey,
     id: undefined,
     tabName: `Tab ${number}`,
-    tabCode: code
+    tabCode: code,
+    queryMode: 'NORMAL'
   }
   draftDefinitions.value.push(newDef)
   selectedPoolKey.value = definitionKey
@@ -533,7 +548,7 @@ function addTabToDepartment() {
   const codes = new Set(draftDefinitions.value.map(item => item.tabCode?.toLowerCase()))
   while (codes.has(code)) code = `tab_${++number}`
   const definitionKey = `new:${Date.now()}:${++localSequence}`
-  draftDefinitions.value.push({ _definitionKey: definitionKey, id: undefined, tabName: `Tab ${number}`, tabCode: code })
+  draftDefinitions.value.push({ _definitionKey: definitionKey, id: undefined, tabName: `Tab ${number}`, tabCode: code, queryMode: 'NORMAL' })
   addAssignment(definitionKey)
 }
 
@@ -554,6 +569,7 @@ function addAssignment(definitionKey) {
     _assignmentKey: `${currentDepartment.value.deptId}:${definitionKey}:${Date.now()}:${++localSequence}`,
     _definitionKey: definitionKey,
     enabled: true,
+    sourceTabIds: [],
     fieldKeys: [],
     defaultSortField: '',
     defaultSortOrder: 'desc',
@@ -611,6 +627,7 @@ function submit() {
     id: def.id,
     tabName: def.tabName,
     tabCode: def.tabCode,
+    queryMode: def.queryMode || 'NORMAL',
     sort: index + 1,
     status: '0'
   }))
@@ -623,10 +640,23 @@ function submit() {
     for (const [index, assignment] of department.tabs.entries()) {
       const definition = definitionOf(assignment)
       if (!definition) continue
+      if (definition.queryMode === 'DELETED' && assignment.enabled) {
+        const sources = assignment.sourceTabIds.map(id => department.tabs.find(tab =>
+          definitionOf(tab)?.id === id && definitionOf(tab)?.queryMode !== 'DELETED'))
+        if (!sources.length || sources.some(source => !source?.enabled)) {
+          return proxy.$modal.msgError(`“${department.deptName}”的“${definition.tabName}”请选择本部门已启用的普通来源 Tab`)
+        }
+        const allowedKeys = new Set(sources.flatMap(source => source.fieldKeys))
+        if (assignment.fieldKeys.some(key => !allowedKeys.has(key))) {
+          return proxy.$modal.msgError(`“${department.deptName}”的“${definition.tabName}”字段不能超出来源 Tab 的字段范围`)
+        }
+      }
       deptTabs.push({
         id: definition.id,
         tabName: definition.tabName,
         tabCode: definition.tabCode,
+        queryMode: definition.queryMode || 'NORMAL',
+        sourceTabIds: definition.queryMode === 'DELETED' ? [...assignment.sourceTabIds] : [],
         sort: index + 1,
         status: assignment.enabled ? '0' : '1',
         fieldKeys: [...assignment.fieldKeys],

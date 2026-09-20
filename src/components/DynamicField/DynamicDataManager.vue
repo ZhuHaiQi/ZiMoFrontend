@@ -38,9 +38,10 @@
           <span class="tab-name">{{ activeTab?.tabName }}</span>
         </div>
         <el-tag size="small" type="info" effect="plain" class="dept-scope-tag">本部门可见</el-tag>
-        <span class="operation-hint">点击单元格即时编辑，失焦自动保存，Esc 取消</span>
+        <el-tag v-if="isDeletedTab" size="small" type="warning" effect="plain">已删除 · 只读</el-tag>
+        <span class="operation-hint">{{ isDeletedTab ? `来源：${sourceTabName}，仅展示已删除记录` : '点击单元格即时编辑，失焦自动保存，Esc 取消' }}</span>
       </div>
-      <el-button type="primary" icon="Plus" :disabled="loading" @click="handleAdd" v-hasPermi="['system:dynamic:data:add']">
+      <el-button v-if="!isDeletedTab" type="primary" icon="Plus" :disabled="loading" @click="handleAdd" v-hasPermi="['system:dynamic:data:add']">
         表格内新增
       </el-button>
     </div>
@@ -64,7 +65,7 @@
         @cell-change="handleCellChange"
       >
         <template #version="{ row }">{{ row._isDraft ? '-' : row._version }}</template>
-        <template #actions="{ row }">
+        <template v-if="!isDeletedTab" #actions="{ row }">
             <template v-if="row._isDraft">
               <el-button link type="primary" icon="Check" :loading="row._submitting" :disabled="row._submitting" @mousedown.prevent.stop @click.stop="saveDraft(row)">
                 保存新增
@@ -142,6 +143,11 @@ const visibleTabs = computed(() => (props.schema.tabs || [])
   .sort((a, b) => (a.sort || 0) - (b.sort || 0)))
 
 const activeTab = computed(() => visibleTabs.value.find(tab => tab.tabCode === activeTabCode.value) || visibleTabs.value[0])
+const isDeletedTab = computed(() => activeTab.value?.queryMode === 'DELETED')
+const sourceTabName = computed(() => {
+  const ids = new Set(activeTab.value?.sourceTabIds ?? [])
+  return visibleTabs.value.filter(tab => ids.has(tab.id ?? tab.tabId)).map(tab => tab.tabName).join('、') || '来源 Tab'
+})
 const activeFields = computed(() => {
   const fieldMap = new Map(schemaFields.value.map(field => [field.fieldKey, field]))
   return (activeTab.value?.fieldKeys || []).map(fieldKey => fieldMap.get(fieldKey)).filter(Boolean)
@@ -308,6 +314,7 @@ async function beforeTabLeave() {
 }
 
 function canEditCell(row, field) {
+  if (isDeletedTab.value || row._status === '2') return false
   if (!editableFieldKeys.value.has(field.fieldKey) || row._submitting || row._deleting) return false
   return row._isDraft
     ? proxy.$auth.hasPermi('system:dynamic:data:add')
@@ -315,6 +322,7 @@ function canEditCell(row, field) {
 }
 
 function handleAdd() {
+  if (isDeletedTab.value) return
   if (!activeTabId.value || loading.value || switchingTab.value) return
   const existingDraft = rows.value.find(row => row._isDraft)
   if (existingDraft) {
@@ -352,6 +360,7 @@ function focusFirstCell(row) {
 
 /** 将 VXE 的编辑关闭事件加入保存队列，翻页和查询前会等待队列清空。 */
 function handleCellChange(payload) {
+  if (isDeletedTab.value || payload.row._status === '2') return
   if (!editableFieldKeys.value.has(payload.field.fieldKey)) return
   if (isSameFieldValue(payload.field, payload.value, payload.originalValue)) return
   if (payload.row._isDraft) {
@@ -378,6 +387,7 @@ function handleCellChange(payload) {
 }
 
 async function saveCell({ row, field, value, originalValue }) {
+  if (isDeletedTab.value || row._status === '2') return false
   if (!editableFieldKeys.value.has(field.fieldKey)) return false
   if (isSameFieldValue(field, value, originalValue)) return true
   // 草稿先保留用户输入，必填空值由单元格浅红背景提示，统一在保存新增时拦截。
@@ -432,6 +442,7 @@ async function flushEditing() {
 }
 
 async function saveDraft(row) {
+  if (isDeletedTab.value) return
   if (row._submitting) return
   row._submitting = true
   // 新增行在浏览器内暂存，用户确认保存前不会产生逐单元格网络请求。
@@ -520,6 +531,7 @@ function replaceWithServerRecord(row, record, fallbackKey, fallbackValue) {
 }
 
 async function handleDelete(row) {
+  if (isDeletedTab.value || row._status === '2') return
   if (row._deleting || row._saving) return
   row._deleting = true
   try {
